@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-accent: #FFAB00;
+  --color-uv-bg: #0A0A0A;
+}
+
+@layer base {
+  body {
+    @apply bg-[#0A0A0A] text-zinc-200 font-sans antialiased;
+  }
+  * { box-sizing: border-box; }
+}
