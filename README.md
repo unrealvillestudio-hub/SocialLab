@@ -1,20 +1,59 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# SocialLab — Unreal>ille Studio
 
-# Run and deploy your AI Studio app
+Generador de copy y scheduling para redes sociales del ecosistema Unreal>ille Studio.
 
-This contains everything you need to run your app locally.
+**Deploy:** Pendiente (repo listo)
+**Contexto completo del ecosistema:** [`CoreProject/CONTEXT.md`](https://github.com/unrealvillestudio-hub/CoreProject/blob/main/CONTEXT.md)
 
-View your app in AI Studio: https://ai.studio/apps/9725cbd7-b5db-4b42-919b-d99aa49fbd5d
+---
 
-## Run Locally
+## Rol en el ecosistema
 
-**Prerequisites:**  Node.js
+SocialLab produce copies nativos por plataforma (Instagram, TikTok, Facebook, LinkedIn) con estructura de calendario editorial. Se apoya en BP_PERSON para voz consistente y en CopyLab para copies de activación.
 
+```
+BluePrints (BP_PERSON voz) ──→ SocialLab (copy por plataforma + calendario)
+CopyLab (copies base)                ↓
+                           Scheduling / Publicación directa
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+---
+
+## Stack
+
+- React 18 + TypeScript + Vite + Tailwind
+- AI: Gemini 2.0 Flash (Gemini API)
+- Deploy: pendiente
+
+---
+
+## Estado
+
+✅ v1.1 — repo listo, deploy pendiente
+
+---
+
+## Dependencias
+
+| Consume | Provee |
+|---------|--------|
+| BP_PERSON (voz, tono por plataforma) | Calendarios editoriales |
+| CopyLab (copies base) | Posts listos para publicar |
+
+---
+
+## Changelog
+
+| Fecha | Cambio |
+|---|---|
+| 2026-03-20 | README actualizado con arquitectura de ecosistema |
+
+---
+
+## Desarrollo local
+
+```bash
+npm install
+cp .env.example .env.local  # añade GEMINI_API_KEY
+npm run dev
+```
