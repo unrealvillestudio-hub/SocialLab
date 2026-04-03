@@ -3,11 +3,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Send, Hash, Image, Video, Plus,
   CheckCircle2, AlertCircle, Clock, ChevronDown, Eye, RotateCcw,
-  Sparkles, Wand2, Tags, Repeat2, ChevronRight, Loader2, X
+  Sparkles, Wand2, Tags, Repeat2, ChevronRight, Loader2, X, Database
 } from 'lucide-react';
 import { BRAND_LIST, Brand } from '../../config/brands';
 import { PLATFORMS, PLATFORM_LIST } from '../../config/platforms';
 import { usePostStore } from '../../store/usePostStore';
+import { useSocialLab } from '../../context/SocialLabContext';
+import { resolveHumanizeCopy, toCanonicalId } from '../../services/socialLabLoader';
 import {
   publishPost, validatePost, estimateCharCount,
   generateSocialCopy, enhanceCopy, suggestHashtags, adaptCopyForPlatform,
@@ -15,10 +17,9 @@ import {
 import { ScheduledPost, PlatformId, Platform } from '../../core/types';
 import { cn } from '../../ui/components';
 
-// ── ENHANCEMENT DEFINITIONS ───────────────────────────────────────────────
+// ── ENHANCEMENT DEFINITIONS ──────────────────────────────────────────────────
 
 type EnhancementId = 'generate' | 'enhance' | 'hashtags' | 'adapt';
-
 interface Enhancement {
   id: EnhancementId;
   label: string;
@@ -26,85 +27,52 @@ interface Enhancement {
   icon: React.ElementType;
   color: string;
 }
-
 const ENHANCEMENTS: Enhancement[] = [
-  {
-    id: 'generate',
-    label: 'Generar',
-    description: 'Genera copy desde un brief',
-    icon: Sparkles,
-    color: '#FFAB00',
-  },
-  {
-    id: 'enhance',
-    label: 'Mejorar',
-    description: 'Reescribe y optimiza el copy actual',
-    icon: Wand2,
-    color: '#A855F7',
-  },
-  {
-    id: 'hashtags',
-    label: 'Hashtags',
-    description: 'Sugiere hashtags para el copy actual',
-    icon: Tags,
-    color: '#22C55E',
-  },
-  {
-    id: 'adapt',
-    label: 'Adaptar',
-    description: 'Reformatea para otra plataforma',
-    icon: Repeat2,
-    color: '#3B82F6',
-  },
+  { id: 'generate', label: 'Generar',  description: 'Genera copy desde un brief',             icon: Sparkles, color: '#FFAB00' },
+  { id: 'enhance',  label: 'Mejorar',  description: 'Reescribe y optimiza el copy actual',     icon: Wand2,    color: '#A855F7' },
+  { id: 'hashtags', label: 'Hashtags', description: 'Sugiere hashtags para el copy actual',    icon: Tags,     color: '#22C55E' },
+  { id: 'adapt',    label: 'Adaptar',  description: 'Reformatea para otra plataforma',         icon: Repeat2,  color: '#3B82F6' },
 ];
 
-// ── LOADING SPINNER ───────────────────────────────────────────────────────
-
 function Spinner({ color }: { color?: string }) {
-  return (
-    <Loader2
-      size={13}
-      className="animate-spin shrink-0"
-      style={{ color: color || 'currentColor' }}
-    />
-  );
+  return <Loader2 size={13} className="animate-spin shrink-0" style={{ color: color || 'currentColor' }} />;
 }
 
-// ── MAIN MODULE ───────────────────────────────────────────────────────────
+// ── MAIN MODULE ───────────────────────────────────────────────────────────────
 
 export default function PostBuilderModule() {
   const { addPost, updatePost } = usePostStore();
 
-  // ── composer state ──────────────────────────────────────────────────────
-  const [selectedBrand, setSelectedBrand]     = useState<Brand>(BRAND_LIST[0]);
-  const [selectedPlatform, setSelectedPlatform] = useState<Platform>(PLATFORMS.INSTAGRAM);
-  const [copy, setCopy]                       = useState('');
-  const [scheduledAt, setScheduledAt]         = useState('');
-  const [isPublishing, setIsPublishing]       = useState(false);
-  const [lastResult, setLastResult]           = useState<{ ok: boolean; msg: string } | null>(null);
-  const [previewOpen, setPreviewOpen]         = useState(false);
+  // Supabase humanize data
+  const { data: socialData, isLoading: socialLoading, source } = useSocialLab();
 
-  // ── enhancement panel state ─────────────────────────────────────────────
+  // ── composer state ──
+  const [selectedBrand,    setSelectedBrand]    = useState<Brand>(BRAND_LIST[0]);
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform>(PLATFORMS.INSTAGRAM);
+  const [copy,             setCopy]             = useState('');
+  const [scheduledAt,      setScheduledAt]      = useState('');
+  const [isPublishing,     setIsPublishing]     = useState(false);
+  const [lastResult,       setLastResult]       = useState<{ ok: boolean; msg: string } | null>(null);
+  const [previewOpen,      setPreviewOpen]      = useState(false);
+
+  // ── enhancement panel state ──
   const [enhancementsOpen, setEnhancementsOpen] = useState(false);
   const [activeEnhancements, setActiveEnhancements] = useState<Set<EnhancementId>>(
     new Set(['generate', 'enhance', 'hashtags', 'adapt'])
   );
-
-  // loading state per enhancement
-  const [loadingId, setLoadingId] = useState<EnhancementId | null>(null);
-
-  // generate-specific state
-  const [brief, setBrief] = useState('');
-
-  // hashtags result
-  const [suggestedHashtags, setSuggestedHashtags] = useState<string[]>([]);
-
-  // adapt-specific state
-  const [adaptTarget, setAdaptTarget] = useState<PlatformId>('FACEBOOK');
-
+  const [loadingId,          setLoadingId]          = useState<EnhancementId | null>(null);
+  const [generateError,      setGenerateError]      = useState<string | null>(null);
+  const [brief,              setBrief]              = useState('');
+  const [suggestedHashtags,  setSuggestedHashtags]  = useState<string[]>([]);
+  const [adaptTarget,        setAdaptTarget]        = useState<PlatformId>('FACEBOOK');
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── derived ─────────────────────────────────────────────────────────────
+  // ── HUMANIZE RESOLVER — uses Supabase data with hardcoded fallback ──
+  const humanizeBlock = useMemo(() => {
+    return resolveHumanizeCopy(selectedBrand.id, socialData);
+  }, [selectedBrand.id, socialData]);
+
+  // ── derived ──
   const activePlatforms = useMemo(() => {
     const brandChannels = selectedBrand.channels.map(c => c.toUpperCase()) as PlatformId[];
     return PLATFORM_LIST.filter(p => brandChannels.includes(p.id));
@@ -113,10 +81,8 @@ export default function PostBuilderModule() {
   const charCount = estimateCharCount(copy, []);
   const charPct   = Math.min((charCount / selectedPlatform.maxChars) * 100, 100);
   const charColor = charPct > 90 ? 'text-red-400' : charPct > 70 ? 'text-amber-400' : 'text-emerald-400';
+  const errors    = validatePost({ copy, scheduledAt, brandId: selectedBrand.id }, selectedPlatform.maxChars);
 
-  const errors = validatePost({ copy, scheduledAt, brandId: selectedBrand.id }, selectedPlatform.maxChars);
-
-  // ── toggle enhancement active ────────────────────────────────────────────
   const toggleEnhancement = (id: EnhancementId) => {
     setActiveEnhancements(prev => {
       const next = new Set(prev);
@@ -128,104 +94,108 @@ export default function PostBuilderModule() {
   const cancelEnhancement = () => {
     abortRef.current?.abort();
     setLoadingId(null);
+    setGenerateError(null);
   };
 
-  // ── enhancement handlers ─────────────────────────────────────────────────
-
-  const handleGenerate = async () => {
-    if (!brief.trim()) return;
+  // ── SHARED AI CALL WRAPPER ──
+  async function runEnhancement<T>(
+    id: EnhancementId,
+    fn: (signal: AbortSignal) => Promise<T>,
+    onSuccess: (result: T) => void
+  ) {
     abortRef.current = new AbortController();
-    setLoadingId('generate');
+    setLoadingId(id);
+    setGenerateError(null);
     try {
-      const result = await generateSocialCopy({
+      const result = await fn(abortRef.current.signal);
+      onSuccess(result);
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setGenerateError(e.message || 'Error generando — intenta de nuevo');
+      }
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  // ── enhancement handlers — now pass humanizeBlock and correct brandId ──
+
+  const handleGenerate = () => {
+    if (!brief.trim()) return;
+    runEnhancement('generate',
+      (signal) => generateSocialCopy({
         brief,
         brandName: selectedBrand.name,
         brandDescription: selectedBrand.description,
         brandMarket: selectedBrand.market,
+        brandId: selectedBrand.id,         // FIX: was missing before
         platform: selectedPlatform.id,
-        signal: abortRef.current.signal,
-      });
-      setCopy(result);
-      setBrief('');
-    } catch (e: any) {
-      if (e.name !== 'AbortError') console.error(e);
-    } finally {
-      setLoadingId(null);
-    }
+        language: 'es-FL',
+        humanizeBlock,                     // FIX: resolved from Supabase
+        signal,
+      }),
+      (result) => { setCopy(result); setBrief(''); }
+    );
   };
 
-  const handleEnhance = async () => {
+  const handleEnhance = () => {
     if (!copy.trim()) return;
-    abortRef.current = new AbortController();
-    setLoadingId('enhance');
-    try {
-      const result = await enhanceCopy({
+    runEnhancement('enhance',
+      (signal) => enhanceCopy({
         copy,
         brandName: selectedBrand.name,
         brandDescription: selectedBrand.description,
+        brandId: selectedBrand.id,         // FIX
         platform: selectedPlatform.id,
-        signal: abortRef.current.signal,
-      });
-      setCopy(result);
-    } catch (e: any) {
-      if (e.name !== 'AbortError') console.error(e);
-    } finally {
-      setLoadingId(null);
-    }
+        humanizeBlock,                     // FIX
+        signal,
+      }),
+      (result) => setCopy(result)
+    );
   };
 
-  const handleHashtags = async () => {
+  const handleHashtags = () => {
     if (!copy.trim()) return;
-    abortRef.current = new AbortController();
-    setLoadingId('hashtags');
-    try {
-      const tags = await suggestHashtags({
+    runEnhancement('hashtags',
+      (signal) => suggestHashtags({
         copy,
         brandName: selectedBrand.name,
         brandMarket: selectedBrand.market,
         platform: selectedPlatform.id,
-        signal: abortRef.current.signal,
-      });
-      setSuggestedHashtags(tags);
-    } catch (e: any) {
-      if (e.name !== 'AbortError') console.error(e);
-    } finally {
-      setLoadingId(null);
-    }
+        signal,
+      }),
+      (tags) => setSuggestedHashtags(tags)
+    );
   };
 
-  const handleAdapt = async () => {
+  const handleAdapt = () => {
     if (!copy.trim() || adaptTarget === selectedPlatform.id) return;
-    abortRef.current = new AbortController();
-    setLoadingId('adapt');
-    try {
-      const result = await adaptCopyForPlatform({
+    runEnhancement('adapt',
+      (signal) => adaptCopyForPlatform({
         copy,
         brandName: selectedBrand.name,
         brandDescription: selectedBrand.description,
+        brandId: selectedBrand.id,         // FIX
         sourcePlatform: selectedPlatform.id,
         targetPlatform: adaptTarget,
-        signal: abortRef.current.signal,
-      });
-      setCopy(result);
-      // Switch active platform to target
-      const targetPlatform = PLATFORMS[adaptTarget];
-      if (targetPlatform) setSelectedPlatform(targetPlatform);
-    } catch (e: any) {
-      if (e.name !== 'AbortError') console.error(e);
-    } finally {
-      setLoadingId(null);
-    }
+        humanizeBlock,                     // FIX
+        signal,
+      }),
+      (result) => {
+        setCopy(result);
+        const targetPlatform = PLATFORMS[adaptTarget];
+        if (targetPlatform) setSelectedPlatform(targetPlatform);
+      }
+    );
   };
 
   const appendHashtags = () => {
     if (!suggestedHashtags.length) return;
-    const hashStr = '\n\n' + suggestedHashtags.join(' ');
-    setCopy(prev => prev + hashStr);
+    setCopy(prev => prev + '\n\n' + suggestedHashtags.join(' '));
     setSuggestedHashtags([]);
   };
 
-  // ── publish handlers ─────────────────────────────────────────────────────
+  // ── publish handlers ──
 
   const handleAddToQueue = () => {
     if (errors.length) return;
@@ -283,7 +253,7 @@ export default function PostBuilderModule() {
 
   const handleReset = () => {
     setCopy(''); setScheduledAt(''); setBrief('');
-    setSuggestedHashtags([]); setLastResult(null);
+    setSuggestedHashtags([]); setLastResult(null); setGenerateError(null);
     setSelectedBrand(BRAND_LIST[0]);
     setSelectedPlatform(PLATFORMS.INSTAGRAM);
     setLoadingId(null);
@@ -291,13 +261,23 @@ export default function PostBuilderModule() {
 
   return (
     <div className="flex gap-6 h-full">
-
       {/* ── LEFT: Config ── */}
       <aside className="w-72 shrink-0 space-y-4">
-
         {/* Brand */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
-          <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Marca</label>
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Marca</label>
+            {source && (
+              <span className={cn(
+                'text-[9px] font-mono px-1.5 py-0.5 rounded border',
+                source === 'supabase'
+                  ? 'bg-green-950 text-green-500 border-green-900'
+                  : 'bg-yellow-950 text-yellow-600 border-yellow-900'
+              )}>
+                {source === 'supabase' ? '● DB' : '● LOCAL'}
+              </span>
+            )}
+          </div>
           <div className="space-y-1.5">
             {BRAND_LIST.map(b => (
               <button
@@ -311,10 +291,10 @@ export default function PostBuilderModule() {
                   }
                 }}
                 className={cn(
-                  "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all text-left",
+                  'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all text-left',
                   selectedBrand.id === b.id
-                    ? "bg-zinc-800 text-white"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                    ? 'bg-zinc-800 text-white'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
                 )}
               >
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: b.color }} />
@@ -334,10 +314,10 @@ export default function PostBuilderModule() {
                 key={p.id}
                 onClick={() => setSelectedPlatform(p)}
                 className={cn(
-                  "flex flex-col items-center gap-1 py-2 px-1 rounded-lg text-xs transition-all",
+                  'flex flex-col items-center gap-1 py-2 px-1 rounded-lg text-xs transition-all',
                   selectedPlatform.id === p.id
-                    ? "bg-zinc-700 text-white ring-1 ring-zinc-600"
-                    : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                    ? 'bg-zinc-700 text-white ring-1 ring-zinc-600'
+                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
                 )}
               >
                 <span className="text-lg leading-none">{p.icon}</span>
@@ -347,19 +327,18 @@ export default function PostBuilderModule() {
           </div>
         </div>
 
-        {/* API status */}
+        {/* Status */}
         <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 flex items-start gap-2">
           <AlertCircle size={14} className="text-amber-400 mt-0.5 shrink-0" />
           <div>
             <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wide">Mock API activa</p>
-            <p className="text-[9px] text-amber-400/50 mt-1 font-mono break-all">{selectedPlatform.apiEndpoint}</p>
+            <p className="text-[9px] text-amber-400/50 mt-1 font-mono">Publicación real → Sprint SocialLab Launch</p>
           </div>
         </div>
       </aside>
 
       {/* ── MAIN: Composer ── */}
       <div className="flex-1 space-y-4 min-w-0">
-
         {/* Brand accent bar */}
         <div
           className="h-1.5 rounded-full"
@@ -368,43 +347,36 @@ export default function PostBuilderModule() {
 
         {/* ── AI ENHANCEMENTS PANEL ── */}
         <div className={cn(
-          "border rounded-xl overflow-hidden transition-colors",
-          enhancementsOpen ? "border-accent/30 bg-zinc-900" : "border-zinc-800 bg-zinc-900"
+          'border rounded-xl overflow-hidden transition-colors',
+          enhancementsOpen ? 'border-accent/30 bg-zinc-900' : 'border-zinc-800 bg-zinc-900'
         )}>
-          {/* Toggle header */}
           <button
             onClick={() => setEnhancementsOpen(v => !v)}
             className="w-full flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/40 transition-colors"
           >
-            <Sparkles size={14} className={cn("transition-colors", enhancementsOpen ? "text-accent" : "text-zinc-600")} />
-            <span className={cn("text-xs font-bold uppercase tracking-widest transition-colors", enhancementsOpen ? "text-accent" : "text-zinc-500")}>
+            <Sparkles size={14} className={cn('transition-colors', enhancementsOpen ? 'text-accent' : 'text-zinc-600')} />
+            <span className={cn('text-xs font-bold uppercase tracking-widest transition-colors', enhancementsOpen ? 'text-accent' : 'text-zinc-500')}>
               AI Enhancements
             </span>
-            {/* Active count badge */}
             <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">
               {activeEnhancements.size}/4 activos
             </span>
             {loadingId && (
               <span className="flex items-center gap-1 text-[10px] text-accent ml-1">
                 <Spinner color="#FFAB00" />
-                Procesando…
+                Generando con Claude…
               </span>
             )}
-            <ChevronDown
-              size={14}
-              className={cn("ml-auto text-zinc-600 transition-transform", enhancementsOpen && "rotate-180")}
-            />
+            <ChevronDown size={14} className={cn('ml-auto text-zinc-600 transition-transform', enhancementsOpen && 'rotate-180')} />
           </button>
 
-          {/* Enhancement functions */}
           <AnimatePresence initial={false}>
             {enhancementsOpen && (
               <motion.div
-                initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
+                initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
                 className="overflow-hidden"
               >
                 <div className="border-t border-zinc-800 p-4 space-y-3">
-
                   {/* Toggle pills */}
                   <div className="flex gap-2 flex-wrap">
                     {ENHANCEMENTS.map(e => (
@@ -412,14 +384,12 @@ export default function PostBuilderModule() {
                         key={e.id}
                         onClick={() => toggleEnhancement(e.id)}
                         className={cn(
-                          "flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold transition-all border",
+                          'flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold transition-all border',
                           activeEnhancements.has(e.id)
-                            ? "border-transparent text-black"
-                            : "bg-transparent border-zinc-700 text-zinc-600 hover:border-zinc-500 hover:text-zinc-400"
+                            ? 'border-transparent text-black'
+                            : 'bg-transparent border-zinc-700 text-zinc-600 hover:border-zinc-500 hover:text-zinc-400'
                         )}
-                        style={activeEnhancements.has(e.id)
-                          ? { backgroundColor: e.color }
-                          : {}}
+                        style={activeEnhancements.has(e.id) ? { backgroundColor: e.color } : {}}
                       >
                         <e.icon size={10} />
                         {e.label}
@@ -427,8 +397,15 @@ export default function PostBuilderModule() {
                     ))}
                   </div>
 
-                  <div className="space-y-2">
+                  {/* Error banner */}
+                  {generateError && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg">
+                      <AlertCircle size={12} className="text-red-400 shrink-0" />
+                      <p className="text-[10px] text-red-400">{generateError}</p>
+                    </div>
+                  )}
 
+                  <div className="space-y-2">
                     {/* 1. GENERATE */}
                     {activeEnhancements.has('generate') && (
                       <div className="bg-zinc-800/50 rounded-lg p-3 space-y-2">
@@ -448,10 +425,10 @@ export default function PostBuilderModule() {
                             onClick={loadingId === 'generate' ? cancelEnhancement : handleGenerate}
                             disabled={!brief.trim() && loadingId !== 'generate'}
                             className={cn(
-                              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all',
                               loadingId === 'generate'
-                                ? "bg-red-500/20 border border-red-500/30 text-red-400"
-                                : "bg-amber-500 hover:bg-amber-400 text-black disabled:opacity-40"
+                                ? 'bg-red-500/20 border border-red-500/30 text-red-400'
+                                : 'bg-amber-500 hover:bg-amber-400 text-black disabled:opacity-40'
                             )}
                           >
                             {loadingId === 'generate' ? <><X size={11} />Cancelar</> : <><Sparkles size={11} />Generar</>}
@@ -474,15 +451,13 @@ export default function PostBuilderModule() {
                           onClick={loadingId === 'enhance' ? cancelEnhancement : handleEnhance}
                           disabled={!copy.trim() && loadingId !== 'enhance'}
                           className={cn(
-                            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0",
+                            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0',
                             loadingId === 'enhance'
-                              ? "bg-red-500/20 border border-red-500/30 text-red-400"
-                              : "bg-purple-500 hover:bg-purple-400 text-white disabled:opacity-40"
+                              ? 'bg-red-500/20 border border-red-500/30 text-red-400'
+                              : 'bg-purple-500 hover:bg-purple-400 text-white disabled:opacity-40'
                           )}
                         >
-                          {loadingId === 'enhance'
-                            ? <><X size={11} />Cancelar</>
-                            : <><Wand2 size={11} />Mejorar</>}
+                          {loadingId === 'enhance' ? <><X size={11} />Cancelar</> : <><Wand2 size={11} />Mejorar</>}
                         </button>
                       </div>
                     )}
@@ -502,48 +477,36 @@ export default function PostBuilderModule() {
                             onClick={loadingId === 'hashtags' ? cancelEnhancement : handleHashtags}
                             disabled={!copy.trim() && loadingId !== 'hashtags'}
                             className={cn(
-                              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0",
+                              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0',
                               loadingId === 'hashtags'
-                                ? "bg-red-500/20 border border-red-500/30 text-red-400"
-                                : "bg-emerald-500 hover:bg-emerald-400 text-black disabled:opacity-40"
+                                ? 'bg-red-500/20 border border-red-500/30 text-red-400'
+                                : 'bg-emerald-500 hover:bg-emerald-400 text-black disabled:opacity-40'
                             )}
                           >
-                            {loadingId === 'hashtags'
-                              ? <><X size={11} />Cancelar</>
-                              : <><Tags size={11} />Sugerir</>}
+                            {loadingId === 'hashtags' ? <><X size={11} />Cancelar</> : <><Tags size={11} />Sugerir</>}
                           </button>
                         </div>
-                        {/* Suggested hashtags result */}
                         <AnimatePresence>
                           {suggestedHashtags.length > 0 && (
                             <motion.div
                               initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
+                              animate={{ opacity: 1, height: 'auto' }}
                               exit={{ opacity: 0, height: 0 }}
                               className="overflow-hidden"
                             >
                               <div className="border border-emerald-500/20 rounded-lg p-2.5 space-y-2">
                                 <div className="flex flex-wrap gap-1">
                                   {suggestedHashtags.map((tag, i) => (
-                                    <span
-                                      key={i}
-                                      className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono"
-                                    >
+                                    <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono">
                                       {tag}
                                     </span>
                                   ))}
                                 </div>
                                 <div className="flex gap-2">
-                                  <button
-                                    onClick={appendHashtags}
-                                    className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors"
-                                  >
-                                    ↓ Añadir al copy
+                                  <button onClick={appendHashtags} className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors">
+                                    ↳ Añadir al copy
                                   </button>
-                                  <button
-                                    onClick={() => setSuggestedHashtags([])}
-                                    className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors"
-                                  >
+                                  <button onClick={() => setSuggestedHashtags([])} className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors">
                                     Descartar
                                   </button>
                                 </div>
@@ -573,30 +536,23 @@ export default function PostBuilderModule() {
                           >
                             {PLATFORM_LIST
                               .filter(p => p.id !== selectedPlatform.id)
-                              .map(p => (
-                                <option key={p.id} value={p.id}>
-                                  {p.icon} {p.label}
-                                </option>
-                              ))}
+                              .map(p => <option key={p.id} value={p.id}>{p.icon} {p.label}</option>)}
                           </select>
                           <button
                             onClick={loadingId === 'adapt' ? cancelEnhancement : handleAdapt}
                             disabled={!copy.trim() && loadingId !== 'adapt'}
                             className={cn(
-                              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0",
+                              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0',
                               loadingId === 'adapt'
-                                ? "bg-red-500/20 border border-red-500/30 text-red-400"
-                                : "bg-blue-500 hover:bg-blue-400 text-white disabled:opacity-40"
+                                ? 'bg-red-500/20 border border-red-500/30 text-red-400'
+                                : 'bg-blue-500 hover:bg-blue-400 text-white disabled:opacity-40'
                             )}
                           >
-                            {loadingId === 'adapt'
-                              ? <><X size={11} />Cancelar</>
-                              : <><Repeat2 size={11} />Adaptar</>}
+                            {loadingId === 'adapt' ? <><X size={11} />Cancelar</> : <><Repeat2 size={11} />Adaptar</>}
                           </button>
                         </div>
                       </div>
                     )}
-
                   </div>
                 </div>
               </motion.div>
@@ -614,14 +570,14 @@ export default function PostBuilderModule() {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className={cn("text-xs font-mono", charColor)}>
+              <span className={cn('text-xs font-mono', charColor)}>
                 {charCount} / {selectedPlatform.maxChars.toLocaleString()}
               </span>
               <button
                 onClick={() => setPreviewOpen(!previewOpen)}
                 className={cn(
-                  "flex items-center gap-1 text-[10px] px-2 py-1 rounded-md transition-colors",
-                  previewOpen ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                  'flex items-center gap-1 text-[10px] px-2 py-1 rounded-md transition-colors',
+                  previewOpen ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
                 )}
               >
                 <Eye size={11} />
@@ -629,23 +585,18 @@ export default function PostBuilderModule() {
               </button>
             </div>
           </div>
-
           <textarea
             value={copy}
             onChange={e => setCopy(e.target.value)}
             placeholder={`Escribe el copy para ${selectedPlatform.label}…\n\nO usa AI Enhancements ↑ para generar desde un brief.`}
             className="w-full h-48 bg-transparent px-4 py-3 text-sm text-zinc-200 placeholder:text-zinc-700 resize-none outline-none leading-relaxed"
           />
-
           <div className="px-4 pb-3">
             <div className="h-0.5 bg-zinc-800 rounded-full overflow-hidden">
               <motion.div
-                className={cn(
-                  "h-full rounded-full transition-colors",
-                  charPct > 90 ? "bg-red-500" : charPct > 70 ? "bg-amber-500" : "bg-emerald-500"
-                )}
+                className={cn('h-full rounded-full transition-colors', charPct > 90 ? 'bg-red-500' : charPct > 70 ? 'bg-amber-500' : 'bg-emerald-500')}
                 animate={{ width: `${charPct}%` }}
-                transition={{ type: "spring", damping: 20 }}
+                transition={{ type: 'spring', damping: 20 }}
               />
             </div>
           </div>
@@ -690,7 +641,6 @@ export default function PostBuilderModule() {
               className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300 outline-none focus:border-accent/50 transition-colors [color-scheme:dark]"
             />
           </div>
-
           <button
             onClick={handleReset}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-sm font-medium transition-all"
@@ -698,7 +648,6 @@ export default function PostBuilderModule() {
             <RotateCcw size={14} />
             Reset
           </button>
-
           <button
             onClick={handleAddToQueue}
             disabled={errors.length > 0}
@@ -707,7 +656,6 @@ export default function PostBuilderModule() {
             <Plus size={14} />
             Encolar
           </button>
-
           <button
             onClick={handlePublishNow}
             disabled={errors.length > 0 || isPublishing}
@@ -737,10 +685,10 @@ export default function PostBuilderModule() {
             <motion.div
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
               className={cn(
-                "flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium",
+                'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium',
                 lastResult.ok
-                  ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
-                  : "bg-red-500/10 border border-red-500/20 text-red-400"
+                  ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                  : 'bg-red-500/10 border border-red-500/20 text-red-400'
               )}
             >
               {lastResult.ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
