@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * socialLabLoader.ts
  * Loads SocialLab data from Supabase with automatic fallback to hardcoded config.
