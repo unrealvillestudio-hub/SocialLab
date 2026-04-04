@@ -1,39 +1,25 @@
 /**
- * CopyLabImportPanel.tsx — SocialLab
+ * CopyLabImportPanel.tsx — SocialLab v1.3
+ * Coloca en: src/modules/postbuilder/CopyLabImportPanel.tsx
+ * Fix 2026-04-04: eliminado 'space: 12' (no es propiedad CSS válida)
  *
- * Panel de importación CopyLab → SocialLab.
- * Se integra dentro de PostBuilderModule.tsx.
+ * INTEGRACIÓN EN PostBuilderModule.tsx:
  *
- * DÓNDE AÑADIRLO EN PostBuilderModule.tsx:
- *
- * 1. Import al principio:
+ * 1. Imports:
  *    import CopyLabImportPanel from './CopyLabImportPanel';
- *    import { importFromClipboard, parseCopyLabInput, buildDraftPost } from '../../services/copyLabBridge';
+ *    import { parseCopyLabInput } from '../../services/copyLabBridge';
  *
- * 2. En el state del módulo:
- *    const [showImport, setShowImport] = useState(false);
- *    const [importText, setImportText]  = useState('');
- *
- * 3. Handler de importación:
+ * 2. Handler:
  *    const handleCopyLabImport = (text: string) => {
- *      const result = parseCopyLabInput({ rawInput: text, brandId: selectedBrand.id, platform: selectedPlatform.id });
- *      if (result.success) {
- *        setCopy(result.copy);
- *        setShowImport(false);
- *        setImportText('');
- *        // Si el resultado trae plataforma específica, actualízala:
- *        // if (result.platform) setSelectedPlatform(PLATFORMS[result.platform]);
- *      }
+ *      setCopy(text);
  *    };
  *
- * 4. En el JSX, añadir el panel antes del copy composer:
+ * 3. En JSX (antes del copy composer):
  *    <CopyLabImportPanel
  *      onImport={handleCopyLabImport}
  *      brandId={selectedBrand.id}
  *      platform={selectedPlatform.id}
  *    />
- *
- * Coloca este archivo en: src/modules/postbuilder/CopyLabImportPanel.tsx
  */
 
 import React, { useState } from 'react';
@@ -47,10 +33,10 @@ interface Props {
 }
 
 export default function CopyLabImportPanel({ brandId, platform, onImport }: Props) {
-  const [open, setOpen]       = useState(false);
-  const [text, setText]       = useState('');
-  const [error, setError]     = useState('');
-  const [preview, setPreview] = useState('');
+  const [open, setOpen]           = useState(false);
+  const [text, setText]           = useState('');
+  const [error, setError]         = useState('');
+  const [preview, setPreview]     = useState('');
   const [sourceType, setSourceType] = useState('');
 
   const handlePaste = async () => {
@@ -79,16 +65,13 @@ export default function CopyLabImportPanel({ brandId, platform, onImport }: Prop
   const handleApply = () => {
     if (!text.trim()) return;
     onImport(text);
-    setText('');
-    setPreview('');
-    setError('');
-    setOpen(false);
+    setText(''); setPreview(''); setError(''); setOpen(false);
   };
 
   const SOURCE_LABELS: Record<string, string> = {
-    text:                'Copy de texto',
-    video_podcast_json:  'Bloques VideoPodcast (JSON)',
-    structured_json:     'JSON estructurado',
+    text:               'Copy de texto',
+    video_podcast_json: 'Bloques VideoPodcast (JSON)',
+    structured_json:    'JSON estructurado',
   };
 
   return (
@@ -109,7 +92,6 @@ export default function CopyLabImportPanel({ brandId, platform, onImport }: Prop
       >
         <span>↓</span>
         Importar de CopyLab
-        {open && <span style={{ marginLeft: 4 }}>·</span>}
       </button>
 
       {/* Panel */}
@@ -117,18 +99,18 @@ export default function CopyLabImportPanel({ brandId, platform, onImport }: Prop
         <div style={{
           marginTop: 8, padding: 16,
           background: '#0B0E13', border: '1px solid #00B4AD33',
-          borderRadius: 8, space: 12,
+          borderRadius: 8,
         }}>
           <div style={{ marginBottom: 10, color: '#6E88A0', fontSize: 12, lineHeight: 1.6 }}>
-            Genera el copy en CopyLab, copia el resultado, y pégalo aquí.
-            Acepta texto libre, JSON de bloques VideoPodcast, o JSON estructurado.
+            Genera el copy en CopyLab, cópialo y pégalo aquí.
+            Acepta texto libre, JSON de bloques VideoPodcast o JSON estructurado.
           </div>
 
           {/* Textarea */}
           <textarea
             value={text}
             onChange={e => { setText(e.target.value); setPreview(''); setSourceType(''); }}
-            placeholder="Pega aquí el output de CopyLab — texto, JSON de bloques o JSON estructurado..."
+            placeholder="Pega aquí el output de CopyLab..."
             style={{
               width: '100%', height: 100, resize: 'vertical',
               background: '#10141C', border: '1px solid #182030',
@@ -143,10 +125,8 @@ export default function CopyLabImportPanel({ brandId, platform, onImport }: Prop
             <button
               onClick={handlePaste}
               style={{
-                padding: '5px 12px', borderRadius: 6,
-                border: '1px solid #1E2A3A',
-                background: 'transparent', color: '#6E88A0',
-                fontSize: 11, cursor: 'pointer',
+                padding: '5px 12px', borderRadius: 6, border: '1px solid #1E2A3A',
+                background: 'transparent', color: '#6E88A0', fontSize: 11, cursor: 'pointer',
               }}
             >
               📋 Pegar portapapeles
@@ -154,23 +134,21 @@ export default function CopyLabImportPanel({ brandId, platform, onImport }: Prop
             <button
               onClick={handleManualParse}
               style={{
-                padding: '5px 12px', borderRadius: 6,
-                border: '1px solid #1E2A3A',
-                background: 'transparent', color: '#6E88A0',
-                fontSize: 11, cursor: 'pointer',
+                padding: '5px 12px', borderRadius: 6, border: '1px solid #1E2A3A',
+                background: 'transparent', color: '#6E88A0', fontSize: 11, cursor: 'pointer',
               }}
             >
-              🔍 Parsear texto
+              🔍 Parsear
             </button>
             <button
               onClick={handleApply}
               disabled={!text.trim()}
               style={{
-                padding: '5px 16px', borderRadius: 6,
-                border: 'none',
+                padding: '5px 16px', borderRadius: 6, border: 'none',
                 background: text.trim() ? '#00B4AD' : '#1E2A3A',
                 color: text.trim() ? '#000' : '#4A5E70',
-                fontSize: 11, fontWeight: 700, cursor: text.trim() ? 'pointer' : 'default',
+                fontSize: 11, fontWeight: 700,
+                cursor: text.trim() ? 'pointer' : 'default',
                 marginLeft: 'auto',
               }}
             >
@@ -179,9 +157,7 @@ export default function CopyLabImportPanel({ brandId, platform, onImport }: Prop
           </div>
 
           {/* Error */}
-          {error && (
-            <div style={{ color: '#E84040', fontSize: 11, marginTop: 6 }}>⚠ {error}</div>
-          )}
+          {error && <div style={{ color: '#E84040', fontSize: 11, marginTop: 6 }}>⚠ {error}</div>}
 
           {/* Preview */}
           {preview && (
