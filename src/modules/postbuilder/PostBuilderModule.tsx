@@ -16,6 +16,8 @@ import {
 } from '../../services/socialEngine';
 import { ScheduledPost, PlatformId, Platform } from '../../core/types';
 import { cn } from '../../ui/components';
+import CopyLabImportPanel from './CopyLabImportPanel';
+import { parseCopyLabInput } from '../../services/copyLabBridge';
 
 // ── ENHANCEMENT DEFINITIONS ──────────────────────────────────────────────────
 
@@ -187,6 +189,11 @@ export default function PostBuilderModule() {
         if (targetPlatform) setSelectedPlatform(targetPlatform);
       }
     );
+  };
+
+  // ── CopyLab import handler ──
+  const handleCopyLabImport = (text: string) => {
+    setCopy(text);
   };
 
   const appendHashtags = () => {
@@ -585,6 +592,13 @@ export default function PostBuilderModule() {
               </button>
             </div>
           </div>
+          {/* ── CopyLab Import Panel ── */}
+          <CopyLabImportPanel
+            brandId={selectedBrand?.id ?? ''}
+            platform={selectedPlatform.id}
+            onImport={handleCopyLabImport}
+          />
+
           <textarea
             value={copy}
             onChange={e => setCopy(e.target.value)}
