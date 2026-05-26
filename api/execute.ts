@@ -1,14 +1,6 @@
 /**
  * SocialLab — POST /api/execute
- * Endpoint para integración con Orchestrator UNRLVL.
- *
- * Acepta { brandId, stage, params, previousOutputs }
- * → Toma el copy de previousOutputs.copylab
- * → Adapta el formato por plataforma (Claude)
- * → Escribe en Supabase tabla scheduled_posts (status: 'pending_publish')
- * → Devuelve confirmación con post_id
- *
- * Env vars: ANTHROPIC_API_KEY, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+ * v2 — CORS * fix + status pending_publish + image_url en scheduled_posts
  */
 
 declare const process: { env: Record<string, string | undefined> };
@@ -18,14 +10,12 @@ const SB_URL  = () => process.env.VITE_SUPABASE_URL ?? '';
 const SB_KEY  = () => process.env.VITE_SUPABASE_ANON_KEY ?? '';
 const ANT_KEY = () => process.env.ANTHROPIC_API_KEY ?? '';
 
-// ── TYPES ─────────────────────────────────────────────────────────────────────
-
 interface ExecuteRequest {
   brandId: string | null;
   stage: { labId: string; label: string; description: string; order: number };
   params: {
-    platforms?: string[];    // ['INSTAGRAM', 'FACEBOOK', 'TIKTOK', 'LINKEDIN', 'THREADS']
-    schedule_at?: string;    // ISO datetime, default: now + 24h
+    platforms?: string[];
+    schedule_at?: string;
     extra_instructions?: string;
   };
   previousOutputs: Record<string, string>;
@@ -35,14 +25,13 @@ interface ScheduledPost {
   brand_id: string;
   platform: string;
   copy_text: string;
+  image_url?: string | null;
   status: string;
   scheduled_at: string;
   source_lab: string;
   orchestrator_stage_label: string;
   created_at: string;
 }
-
-// ── SUPABASE HELPERS ───────────────────────────────────────────────────────────
 
 async function sb<T>(path: string): Promise<T | null> {
   try {
@@ -67,18 +56,13 @@ async function sbInsert(table: string, data: object): Promise<{ id?: string; err
       },
       body: JSON.stringify(data),
     });
-    if (!res.ok) {
-      const err = await res.text();
-      return { error: err };
-    }
+    if (!res.ok) return { error: await res.text() };
     const result = await res.json();
     return { id: Array.isArray(result) ? result[0]?.id : result?.id };
   } catch (e) {
     return { error: String(e) };
   }
 }
-
-// ── ADAPT COPY FOR PLATFORM ────────────────────────────────────────────────────
 
 async function adaptForPlatform(
   rawCopy: string,
@@ -127,9 +111,6 @@ Solo devuelve el copy adaptado. Sin explicaciones.`,
   return data.content?.[0]?.text ?? rawCopy;
 }
 
-// ── HANDLER ───────────────────────────────────────────────────────────────────
-
-// QW1 FIX: CORS abierto — era 'https://orchestrator.vercel.app' (URL incorrecta)
 const CORS = {
   'Content-Type': 'application/json',
   'Access-Control-Allow-Origin': '*',
@@ -139,14 +120,14 @@ const CORS = {
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed', status: 'error' }), { status: 405, headers: CORS });
+  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: CORS });
 
   let body: ExecuteRequest;
   try { body = await req.json(); }
-  catch { return new Response(JSON.stringify({ error: 'Invalid JSON', status: 'error' }), { status: 400, headers: CORS }); }
+  catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: CORS }); }
 
   if (!body.brandId) {
-    return new Response(JSON.stringify({ error: 'brandId is required', status: 'error' }), { status: 400, headers: CORS });
+    return new Response(JSON.stringify({ error: 'brandId is required' }), { status: 400, headers: CORS });
   }
 
   const rawCopy =
@@ -159,9 +140,11 @@ export default async function handler(req: Request): Promise<Response> {
   if (!rawCopy) {
     return new Response(JSON.stringify({
       error: 'No copy available. Run CopyLab stage first.',
-      status: 'error',
     }), { status: 400, headers: CORS });
   }
+
+  // GAP 2 FIX: recibir image_url de previousOutputs (inyectada por Orchestrator tras ImageLab)
+  const imageUrl = body.previousOutputs?.image_url ?? null;
 
   const platforms  = body.params.platforms ?? ['INSTAGRAM', 'FACEBOOK'];
   const scheduleAt = body.params.schedule_at
@@ -173,11 +156,11 @@ export default async function handler(req: Request): Promise<Response> {
     for (const platform of platforms) {
       const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!);
 
-      // QW2: status cambiado a 'pending_publish' — /api/publish lo lee y publica via Meta MCP
       const { id, error } = await sbInsert('scheduled_posts', {
         brand_id:                 body.brandId,
         platform:                 platform.toUpperCase(),
         copy_text:                adaptedCopy,
+        image_url:                imageUrl,   // ← GAP 2: imagen del Orchestrator
         status:                   'pending_publish',
         scheduled_at:             scheduleAt,
         source_lab:               'sociallab_orchestrator',
@@ -195,19 +178,19 @@ export default async function handler(req: Request): Promise<Response> {
 
     const output = [
       `✅ ${results.length} post(s) encolados — scheduled para ${new Date(scheduleAt).toLocaleString('es-ES')}`,
+      imageUrl ? `🖼️ imagen: ${imageUrl}` : '⚠️ sin imagen',
       '',
       ...results.map(r =>
         `${r.platform}: ${r.status}${r.post_id ? ` (id: ${r.post_id})` : ''}\n"${r.copy_preview}"`
       ),
       '',
-      '📬 Posts en scheduled_posts con status pending_publish — /api/publish los publicará via Meta MCP.',
+      '📬 Posts en scheduled_posts con status pending_publish → /api/publish los publicará via Meta MCP.',
     ].join('\n');
 
     return new Response(JSON.stringify({ output, results, status: 'ok' }), { status: 200, headers: CORS });
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[SocialLab /api/execute]', msg);
     return new Response(JSON.stringify({ error: msg, status: 'error' }), { status: 500, headers: CORS });
   }
 }
