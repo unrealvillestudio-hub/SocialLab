@@ -5,12 +5,8 @@
  * Acepta { brandId, stage, params, previousOutputs }
  * → Toma el copy de previousOutputs.copylab
  * → Adapta el formato por plataforma (Claude)
- * → Escribe en Supabase tabla scheduled_posts (status: 'pending_oauth')
+ * → Escribe en Supabase tabla scheduled_posts (status: 'pending_publish')
  * → Devuelve confirmación con post_id
- *
- * NOTA: La publicación real requiere OAuth por plataforma (sprint posterior).
- * Por ahora los posts quedan en scheduled_posts listos para publicar manualmente
- * o vía OAuth cuando esté configurado.
  *
  * Env vars: ANTHROPIC_API_KEY, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
  */
@@ -126,16 +122,17 @@ Solo devuelve el copy adaptado. Sin explicaciones.`,
     }),
   });
 
-  if (!res.ok) return rawCopy; // fallback: copy original sin adaptar
+  if (!res.ok) return rawCopy;
   const data = await res.json();
   return data.content?.[0]?.text ?? rawCopy;
 }
 
 // ── HANDLER ───────────────────────────────────────────────────────────────────
 
+// QW1 FIX: CORS abierto — era 'https://orchestrator.vercel.app' (URL incorrecta)
 const CORS = {
   'Content-Type': 'application/json',
-  'Access-Control-Allow-Origin': 'https://orchestrator.vercel.app',
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
@@ -152,7 +149,6 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: 'brandId is required', status: 'error' }), { status: 400, headers: CORS });
   }
 
-  // Obtener copy source — prioridad: copylab > weblab > stage.description
   const rawCopy =
     body.previousOutputs?.copylab ??
     body.previousOutputs?.CopyLab ??
@@ -169,21 +165,20 @@ export default async function handler(req: Request): Promise<Response> {
 
   const platforms  = body.params.platforms ?? ['INSTAGRAM', 'FACEBOOK'];
   const scheduleAt = body.params.schedule_at
-    ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // default: mañana
+    ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   try {
     const results: Array<{ platform: string; post_id?: string; status: string; copy_preview: string }> = [];
 
-    // Adaptar y encolar por plataforma
     for (const platform of platforms) {
       const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!);
 
-      // Escribir en Supabase scheduled_posts
+      // QW2: status cambiado a 'pending_publish' — /api/publish lo lee y publica via Meta MCP
       const { id, error } = await sbInsert('scheduled_posts', {
         brand_id:                 body.brandId,
         platform:                 platform.toUpperCase(),
         copy_text:                adaptedCopy,
-        status:                   'pending_oauth',   // → 'scheduled' cuando OAuth esté listo
+        status:                   'pending_publish',
         scheduled_at:             scheduleAt,
         source_lab:               'sociallab_orchestrator',
         orchestrator_stage_label: body.stage.label,
@@ -205,7 +200,7 @@ export default async function handler(req: Request): Promise<Response> {
         `${r.platform}: ${r.status}${r.post_id ? ` (id: ${r.post_id})` : ''}\n"${r.copy_preview}"`
       ),
       '',
-      '⚠️ Publicación pendiente de OAuth Meta/TikTok. Los posts están en scheduled_posts en Supabase.',
+      '📬 Posts en scheduled_posts con status pending_publish — /api/publish los publicará via Meta MCP.',
     ].join('\n');
 
     return new Response(JSON.stringify({ output, results, status: 'ok' }), { status: 200, headers: CORS });
