@@ -13,13 +13,14 @@
  * - Si post_id → publica ese post específico
  * - Si ninguno → error
  *
- * Env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, META_MCP_URL
+ * Env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, META_MCP_URL
+ *   (Prefijo VITE_ no existe en runtime Vercel serverless — es build-time del cliente.)
  */
 
 declare const process: { env: Record<string, string | undefined> };
 
-const SB_URL     = () => process.env.VITE_SUPABASE_URL ?? '';
-const SB_KEY     = () => process.env.VITE_SUPABASE_ANON_KEY ?? '';
+const SB_URL     = () => process.env.SUPABASE_URL ?? '';
+const SB_KEY     = () => process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const META_MCP   = () => process.env.META_MCP_URL ?? 'https://unrlvl-meta-mcp.vercel.app/api/mcp/mcp';
 
 const CORS = {

@@ -8,8 +8,10 @@ export const config = { maxDuration: 300 };
 declare const process: { env: Record<string, string | undefined> };
 
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
-const SB_URL  = () => process.env.VITE_SUPABASE_URL ?? '';
-const SB_KEY  = () => process.env.VITE_SUPABASE_ANON_KEY ?? '';
+// Env vars: prefijo VITE_ no existe en runtime Vercel serverless (es build-time
+// del cliente Vite). Usamos las vars estándar de server.
+const SB_URL  = () => process.env.SUPABASE_URL ?? '';
+const SB_KEY  = () => process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const ANT_KEY = () => process.env.ANTHROPIC_API_KEY ?? '';
 
 interface ExecuteRequest {
@@ -158,7 +160,7 @@ export default async function handler(req: Request): Promise<Response> {
         const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!);
 
         const { id, error } = await sbInsert('scheduled_posts', {
-          brand_id:                 body.brandId,
+          brand_id:                 body.brandId!,
           platform:                 platform.toUpperCase(),
           copy_text:                adaptedCopy,
           image_url:                imageUrl,   // ← GAP 2: imagen del Orchestrator
