@@ -3,6 +3,8 @@
  * v2 — CORS * fix + status pending_publish + image_url en scheduled_posts
  */
 
+export const config = { maxDuration: 300 };
+
 declare const process: { env: Record<string, string | undefined> };
 
 const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
@@ -151,30 +153,30 @@ export default async function handler(req: Request): Promise<Response> {
     ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   try {
-    const results: Array<{ platform: string; post_id?: string; status: string; copy_preview: string }> = [];
+    const results = await Promise.all(
+      platforms.map(async (platform) => {
+        const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!);
 
-    for (const platform of platforms) {
-      const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!);
+        const { id, error } = await sbInsert('scheduled_posts', {
+          brand_id:                 body.brandId,
+          platform:                 platform.toUpperCase(),
+          copy_text:                adaptedCopy,
+          image_url:                imageUrl,   // ← GAP 2: imagen del Orchestrator
+          status:                   'pending_publish',
+          scheduled_at:             scheduleAt,
+          source_lab:               'sociallab_orchestrator',
+          orchestrator_stage_label: body.stage.label,
+          created_at:               new Date().toISOString(),
+        } satisfies ScheduledPost);
 
-      const { id, error } = await sbInsert('scheduled_posts', {
-        brand_id:                 body.brandId,
-        platform:                 platform.toUpperCase(),
-        copy_text:                adaptedCopy,
-        image_url:                imageUrl,   // ← GAP 2: imagen del Orchestrator
-        status:                   'pending_publish',
-        scheduled_at:             scheduleAt,
-        source_lab:               'sociallab_orchestrator',
-        orchestrator_stage_label: body.stage.label,
-        created_at:               new Date().toISOString(),
-      } satisfies ScheduledPost);
-
-      results.push({
-        platform,
-        post_id:      id,
-        status:       error ? 'queued_local' : 'queued_supabase',
-        copy_preview: adaptedCopy.slice(0, 120) + (adaptedCopy.length > 120 ? '...' : ''),
-      });
-    }
+        return {
+          platform,
+          post_id:      id,
+          status:       error ? 'queued_local' : 'queued_supabase',
+          copy_preview: adaptedCopy.slice(0, 120) + (adaptedCopy.length > 120 ? '...' : ''),
+        };
+      })
+    );
 
     const output = [
       `✅ ${results.length} post(s) encolados — scheduled para ${new Date(scheduleAt).toLocaleString('es-ES')}`,
