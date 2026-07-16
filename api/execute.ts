@@ -1,13 +1,13 @@
 /**
  * SocialLab — POST /api/execute
  * v2 — CORS * fix + status pending_publish + image_url en scheduled_posts
+ *
+ * maxDuration se declara en vercel.json (no aquí, para no duplicar la fuente).
  */
-
-export const config = { maxDuration: 300 };
 
 declare const process: { env: Record<string, string | undefined> };
 
-const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+const CLAUDE_MODEL = 'claude-sonnet-5';
 // Env vars: prefijo VITE_ no existe en runtime Vercel serverless (es build-time
 // del cliente Vite). Usamos las vars estándar de server.
 const SB_URL  = () => process.env.SUPABASE_URL ?? '';
@@ -97,7 +97,10 @@ async function adaptForPlatform(
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: 600,
-      temperature: 0.6,
+      // Sonnet 5 rechaza temperature/top_p/top_k con 400 → se elimina.
+      // Sonnet 5 corre adaptive thinking si se omite `thinking`; con
+      // max_tokens 600 eso truncaría el copy, así que se desactiva explícito.
+      thinking: { type: 'disabled' },
       system: `Eres el adaptador de copy por plataforma de SocialLab, UNRLVL Studio.
 Tu trabajo: tomar copy existente y adaptarlo al formato y tono específico de cada red social.
 Idioma: ${idioma}. Mantén el idioma del original.
@@ -115,23 +118,31 @@ Solo devuelve el copy adaptado. Sin explicaciones.`,
   return data.content?.[0]?.text ?? rawCopy;
 }
 
-const CORS = {
-  'Content-Type': 'application/json',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+function setCors(res: any): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
 
-export default async function handler(req: Request): Promise<Response> {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: CORS });
+export default async function handler(req: any, res: any) {
+  setCors(res);
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  // req.body ya viene parseado por el runtime Node de Vercel cuando el
+  // Content-Type es application/json. Guarda por si llega vacío o sin parsear.
   let body: ExecuteRequest;
-  try { body = await req.json(); }
-  catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: CORS }); }
+  if (typeof req.body === 'string') {
+    try { body = JSON.parse(req.body); }
+    catch { return res.status(400).json({ error: 'Invalid JSON' }); }
+  } else if (req.body && typeof req.body === 'object') {
+    body = req.body as ExecuteRequest;
+  } else {
+    body = {} as ExecuteRequest;
+  }
 
   if (!body.brandId) {
-    return new Response(JSON.stringify({ error: 'brandId is required' }), { status: 400, headers: CORS });
+    return res.status(400).json({ error: 'brandId is required' });
   }
 
   const rawCopy =
@@ -142,9 +153,7 @@ export default async function handler(req: Request): Promise<Response> {
     '';
 
   if (!rawCopy) {
-    return new Response(JSON.stringify({
-      error: 'No copy available. Run CopyLab stage first.',
-    }), { status: 400, headers: CORS });
+    return res.status(400).json({ error: 'No copy available. Run CopyLab stage first.' });
   }
 
   // GAP 2 FIX: recibir image_url de previousOutputs (inyectada por Orchestrator tras ImageLab)
@@ -191,10 +200,10 @@ export default async function handler(req: Request): Promise<Response> {
       '📬 Posts en scheduled_posts con status pending_publish → /api/publish los publicará via Meta MCP.',
     ].join('\n');
 
-    return new Response(JSON.stringify({ output, results, status: 'ok' }), { status: 200, headers: CORS });
+    return res.status(200).json({ output, results, status: 'ok' });
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: msg, status: 'error' }), { status: 500, headers: CORS });
+    return res.status(500).json({ error: msg, status: 'error' });
   }
 }
