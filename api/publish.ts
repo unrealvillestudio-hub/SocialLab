@@ -23,12 +23,11 @@ const SB_URL     = () => process.env.SUPABASE_URL ?? '';
 const SB_KEY     = () => process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const META_MCP   = () => process.env.META_MCP_URL ?? 'https://unrlvl-meta-mcp.vercel.app/api/mcp/mcp';
 
-const CORS = {
-  'Content-Type': 'application/json',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+function setCors(res: any): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
 
 // ── TYPES ─────────────────────────────────────────────────────────────────────
 
@@ -210,15 +209,22 @@ async function publishPost(post: ScheduledPost): Promise<PublishResult> {
 
 // ── HANDLER ───────────────────────────────────────────────────────────────────
 
-export default async function handler(req: Request): Promise<Response> {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: CORS });
+export default async function handler(req: any, res: any) {
+  setCors(res);
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  // req.body ya viene parseado por el runtime Node de Vercel cuando el
+  // Content-Type es application/json. Guarda por si llega vacío o sin parsear.
   let body: { brand_id?: string; post_id?: string } = {};
-  try { body = await req.json(); } catch { /* vacío OK */ }
+  if (typeof req.body === 'string') {
+    try { body = JSON.parse(req.body); } catch { /* vacío OK */ }
+  } else if (req.body && typeof req.body === 'object') {
+    body = req.body;
+  }
 
   if (!body.brand_id && !body.post_id) {
-    return new Response(JSON.stringify({ error: 'brand_id or post_id required' }), { status: 400, headers: CORS });
+    return res.status(400).json({ error: 'brand_id or post_id required' });
   }
 
   // Leer posts pendientes
@@ -230,7 +236,7 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   if (!posts.length) {
-    return new Response(JSON.stringify({ message: 'No pending posts found', results: [] }), { status: 200, headers: CORS });
+    return res.status(200).json({ message: 'No pending posts found', results: [] });
   }
 
   const results: PublishResult[] = [];
@@ -269,5 +275,5 @@ export default async function handler(req: Request): Promise<Response> {
     ),
   ].join('\n');
 
-  return new Response(JSON.stringify({ output, results, published, failed, status: 'ok' }), { status: 200, headers: CORS });
+  return res.status(200).json({ output, results, published, failed, status: 'ok' });
 }
