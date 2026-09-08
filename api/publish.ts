@@ -1,7 +1,9 @@
 /**
  * SocialLab — POST /api/publish
  * Publish worker: lee scheduled_posts con status='pending_publish'
- * y los publica via Meta MCP (ig_create_container, ig_publish_container, fb_publish_post)
+ * y los publica via Meta MCP:
+ *   INSTAGRAM  ig_create_container + ig_publish_container
+ *   FACEBOOK   fb_publish_photo si el post lleva imagen · fb_publish_post si no (N11, 2026-09-08)
  *
  * Puede llamarse:
  * - Manualmente desde Claude / Ayra
@@ -52,15 +54,52 @@ interface PublishResult {
 
 // ── SUPABASE HELPERS ───────────────────────────────────────────────────────────
 
+/**
+ * N11 cambio 3 — UN FALLO DE LECTURA YA NO SE LEE COMO «NO HAY NADA PENDIENTE».
+ *
+ * El `catch { return [] }` anterior devolvia lo mismo ante las dos situaciones, y el handler
+ * respondia `200 {"message":"No pending posts found"}` en las dos. Con las credenciales ausentes
+ * eso produjo un NOOP: el drenaje leyo un 200 y conto la corrida como hecha sin publicar nada.
+ * Es el mismo fail-silent que N09 cerro en `content-scheduler`, en otro archivo y un piso mas
+ * abajo — y ahi tambien lo que faltaba no era mas informacion, sino que el error tuviera
+ * PROHIBIDO parecerse a un resultado.
+ *
+ * Ahora lanza `SbReadError` y el handler responde `503`. Cero filas sigue siendo `[]` y sigue
+ * siendo legitimo: lo que deja de existir es la tercera lectura, la que no distingue una de otra.
+ */
+class SbReadError extends Error {
+  constructor(public path: string, public detail: string) {
+    super(`SUPABASE_READ_FAILED: ${path} — ${detail}`);
+    this.name = 'SbReadError';
+  }
+}
+
 async function sbGet<T>(path: string): Promise<T[]> {
+  // La configuracion ausente se nombra por su nombre. Es la causa real del NOOP de hoy, y un
+  // `fetch` contra `''` no dice nada parecido a «falta SUPABASE_SERVICE_ROLE_KEY».
+  if (!SB_URL() || !SB_KEY()) {
+    throw new SbReadError(path, 'faltan SUPABASE_URL y/o SUPABASE_SERVICE_ROLE_KEY en el runtime');
+  }
+  let res: Response;
   try {
-    const res = await fetch(`${SB_URL()}/rest/v1/${path}`, {
+    res = await fetch(`${SB_URL()}/rest/v1/${path}`, {
       headers: { apikey: SB_KEY(), Authorization: `Bearer ${SB_KEY()}` },
     });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : [data];
-  } catch { return []; }
+  } catch (err) {
+    throw new SbReadError(path, `la peticion no llego: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!res.ok) {
+    const cuerpo = await res.text().catch(() => '');
+    throw new SbReadError(path, `HTTP ${res.status} ${cuerpo.slice(0, 300)}`);
+  }
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch (err) {
+    // Un 2xx con cuerpo ilegible tampoco es una lista vacia: es una respuesta que no se entendio.
+    throw new SbReadError(path, `respuesta 2xx ilegible: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return (Array.isArray(data) ? data : [data]) as T[];
 }
 
 async function sbUpdate(table: string, id: string, data: object): Promise<boolean> {
@@ -165,16 +204,47 @@ async function publishPost(post: ScheduledPost): Promise<PublishResult> {
     }
 
     if (platform === 'FACEBOOK') {
-      const fbRes = await mcpCall('fb_publish_post', {
-        brand_id: post.brand_id,
-        message:  post.copy_text,
-        ...(post.image_url ? { link: post.image_url } : {}),
-      });
+      // ── N11 cambio 1 · UNA IMAGEN SE PUBLICA COMO FOTO, NO COMO ENLACE ─────────────────────────
+      // `fb_publish_post` con `link` pide a Facebook que PREVISUALICE una URL: el resultado es una
+      // tarjeta de enlace, y la imagen queda servida desde `external-…/emg1/` —el cache de enlaces
+      // externos de Meta— en vez de `scontent-…/v/t39.30808-6/`, que es donde vive una foto subida.
+      // Se ve distinto, se recorta distinto y depende de que la URL de origen siga viva.
+      //
+      // `fb_publish_photo` sube la foto a la pagina (`POST /{page_id}/photos`) y el pie va en
+      // `caption`, no en `message`. Sin imagen no hay foto que subir y el camino de siempre es el
+      // correcto: se conserva intacto.
+      const conFoto = typeof post.image_url === 'string' && post.image_url.trim().length > 0;
+      const fbRes = conFoto
+        ? await mcpCall('fb_publish_photo', {
+            brand_id: post.brand_id,
+            url:      post.image_url,
+            caption:  post.copy_text,
+          })
+        : await mcpCall('fb_publish_post', {
+            brand_id: post.brand_id,
+            message:  post.copy_text,
+          });
       const fbText = extractMcpText(fbRes);
+
+      // ── N11 cambio 2 · EL IDENTIFICADOR DEL POST, NO EL DE LA FOTO ────────────────────────────
+      // `POST /{page_id}/photos` devuelve DOS identificadores: `id` es el de la foto y `post_id` el
+      // del post publicado. Guardar el de la foto deja `platform_post_id` apuntando a un objeto que
+      // no es el que se publico, y cualquier lectura posterior —engagement, borrado, verificacion—
+      // pregunta por lo que no es.
+      //
+      // `post_id` primero y `id` como respaldo: `fb_publish_post` sigue devolviendo solo `id`, y esa
+      // rama tiene que seguir funcionando igual.
+      //
+      // NO SE ASUME QUE `post_id` VENGA. El contrato lo dice, pero nadie lo ha medido contra una
+      // respuesta real; por eso la respuesta cruda se registra entera y, si no viene ninguno de los
+      // dos, esto falla DICIENDO lo que llego en vez de dar por publicado algo sin prueba.
+      console.log(`[N11][FACEBOOK] post=${post.id} conFoto=${conFoto} respuesta_cruda=${String(fbText).slice(0, 800)}`);
+
       let platformPostId: string | null = null;
       try {
         const parsed = JSON.parse(fbText ?? '{}');
-        platformPostId = parsed.id ?? null;
+        const elegido = parsed.post_id ?? parsed.id ?? null;
+        platformPostId = elegido == null ? null : String(elegido);
       } catch { /* no JSON */ }
 
       return {
@@ -183,7 +253,9 @@ async function publishPost(post: ScheduledPost): Promise<PublishResult> {
         brand_id:         post.brand_id,
         status:           platformPostId ? 'published' : 'failed',
         platform_post_id: platformPostId ?? undefined,
-        error:            platformPostId ? undefined : `FB publish failed: ${fbText}`,
+        error:            platformPostId
+          ? undefined
+          : `FB publish failed (via ${conFoto ? 'fb_publish_photo' : 'fb_publish_post'}): ${fbText}`,
       };
     }
 
@@ -227,14 +299,27 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'brand_id or post_id required' });
   }
 
-  // Leer posts pendientes
+  // Leer posts pendientes.
+  //
+  // N11 cambio 3 — «no pude leer» y «no hay nada» dejan de responder lo mismo. El `503` es
+  // deliberado y no un `500`: quien llama —el drenaje de `content-scheduler`— trata cualquier
+  // no-2xx como fallo y ahora lo VE, en vez de leer un `200 No pending posts found` y contar la
+  // corrida como hecha. Un NOOP silencioso cuesta una franja; un 503 cuesta un reintento.
   let posts: ScheduledPost[] = [];
-  if (body.post_id) {
-    posts = await sbGet<ScheduledPost>(`scheduled_posts?id=eq.${body.post_id}&status=eq.pending_publish`);
-  } else {
-    posts = await sbGet<ScheduledPost>(`scheduled_posts?brand_id=eq.${body.brand_id}&status=eq.pending_publish&order=scheduled_at.asc`);
+  try {
+    if (body.post_id) {
+      posts = await sbGet<ScheduledPost>(`scheduled_posts?id=eq.${body.post_id}&status=eq.pending_publish`);
+    } else {
+      posts = await sbGet<ScheduledPost>(`scheduled_posts?brand_id=eq.${body.brand_id}&status=eq.pending_publish&order=scheduled_at.asc`);
+    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`[N11] lectura de scheduled_posts fallida: ${detail}`);
+    return res.status(503).json({ error: 'supabase_read_failed', detail, results: [] });
   }
 
+  // Cero filas SIGUE siendo legitimo y sigue respondiendo 200: la marca no tiene nada pendiente.
+  // Lo que ya no puede pasar por aqui es un fallo de lectura disfrazado de bandeja vacia.
   if (!posts.length) {
     return res.status(200).json({ message: 'No pending posts found', results: [] });
   }
