@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node tests/contenedor_9007_test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

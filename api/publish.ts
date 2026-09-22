@@ -2,7 +2,7 @@
  * SocialLab — POST /api/publish
  * Publish worker: lee scheduled_posts con status='pending_publish'
  * y los publica via Meta MCP:
- *   INSTAGRAM  ig_create_container + ig_publish_container
+ *   INSTAGRAM  ig_create_container + ig_get_container_status (hasta FINISHED) + ig_publish_container
  *   FACEBOOK   fb_publish_photo si el post lleva imagen · fb_publish_post si no (N11, 2026-09-08)
  *
  * Puede llamarse:
@@ -18,6 +18,11 @@
  * Env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, META_MCP_URL
  *   (Prefijo VITE_ no existe en runtime Vercel serverless — es build-time del cliente.)
  */
+
+import {
+  CONTAINER_TIMEOUT_MS, FIRST_CHECK_MS, CHECK_EVERY_MS, PUBLISH_DEADLINE_MS,
+  dormir, leerEstadoContenedor, type ContainerStatus,
+} from './_igContainer.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -156,9 +161,56 @@ function extractMcpText(result: unknown): string | null {
   return null;
 }
 
+// ── ESPERAR A QUE EL CONTENEDOR DE INSTAGRAM ESTE LISTO · 9007 ────────────────
+//
+// Los plazos y la lectura del estado viven en `_igContainer.ts`, que es puro y se prueba solo.
+// Aqui queda lo que necesita hablar con el MCP: el bucle de espera.
+/** Lo que resulta de esperar: o se puede publicar, o hay un motivo escrito para no hacerlo. */
+type EsperaResultado = { listo: true } | { listo: false; error: string };
+
+async function esperarContenedorListo(
+  brand_id: string, creation_id: string, deadline: number,
+): Promise<EsperaResultado> {
+  const hasta = Math.min(Date.now() + CONTAINER_TIMEOUT_MS, deadline);
+  let ultimo: ContainerStatus = 'UNKNOWN';
+  let detalle: string | null = null;
+  let consultas = 0;
+
+  await dormir(Math.min(FIRST_CHECK_MS, Math.max(0, hasta - Date.now())));
+
+  while (Date.now() < hasta) {
+    consultas++;
+    const res = await mcpCall('ig_get_container_status', { brand_id, creation_id });
+    const leido = leerEstadoContenedor(extractMcpText(res));
+    ultimo = leido.estado;
+    detalle = leido.detalle;
+
+    if (ultimo === 'FINISHED') return { listo: true };
+
+    if (ultimo === 'ERROR' || ultimo === 'EXPIRED') {
+      return { listo: false, error:
+        `Container ${ultimo.toLowerCase()} after ${consultas} check(s): ${detalle ?? 'sin detalle'}` };
+    }
+    if (ultimo === 'PUBLISHED') {
+      // NO se vuelve a publicar. Un duplicado en la cuenta de la marca no se deshace con un reintento.
+      return { listo: false, error:
+        'Container already PUBLISHED — not publishing again to avoid a duplicate post' };
+    }
+
+    const queda = hasta - Date.now();
+    if (queda <= 0) break;
+    await dormir(Math.min(CHECK_EVERY_MS, queda));
+  }
+
+  return { listo: false, error:
+    `Container not ready after ${Math.round((Date.now() - (hasta - CONTAINER_TIMEOUT_MS)) / 1000)}s `
+    + `(${consultas} check(s), last status ${ultimo}${detalle ? `: ${detalle}` : ''}). `
+    + 'Publishing now would fail with 9007.' };
+}
+
 // ── PUBLISH PER PLATFORM ──────────────────────────────────────────────────────
 
-async function publishPost(post: ScheduledPost): Promise<PublishResult> {
+async function publishPost(post: ScheduledPost, deadline: number): Promise<PublishResult> {
   const platform = post.platform.toUpperCase();
 
   try {
@@ -181,7 +233,17 @@ async function publishPost(post: ScheduledPost): Promise<PublishResult> {
         return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed', error: `Container creation failed: ${containerText}` };
       }
 
-      // Paso 2: publicar container
+      // Paso 2: ESPERAR a que el contenedor este listo.
+      //
+      // Es el paso que faltaba y la causa entera del 9007. Instagram procesa el medio de forma
+      // asincrona; el id que acaba de volver todavia no sirve. Ver el bloque de arriba.
+      const espera = await esperarContenedorListo(post.brand_id, creationId, deadline);
+      if (!espera.listo) {
+        return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+                 error: `Container not publishable: ${espera.error}` };
+      }
+
+      // Paso 3: publicar container
       const publishRes = await mcpCall('ig_publish_container', {
         brand_id:    post.brand_id,
         creation_id: creationId,
@@ -325,6 +387,10 @@ export default async function handler(req: any, res: any) {
   }
 
   const results: PublishResult[] = [];
+  // 9007 — el plazo de TODA la corrida. Instagram ahora espera a su contenedor, asi que una llamada
+  // con `brand_id` y varios pendientes puede sumar. Se declara aqui, una vez, y cada post recibe lo
+  // que queda de el.
+  const deadline = Date.now() + PUBLISH_DEADLINE_MS;
 
   for (const post of posts) {
     // Solo publicar si scheduled_at <= ahora
@@ -334,7 +400,15 @@ export default async function handler(req: any, res: any) {
       continue;
     }
 
-    const result = await publishPost(post);
+    // SIN PLAZO NO SE EMPIEZA. Publicar con el tiempo agotado deja la fila a medias y la funcion
+    // cortada por Vercel sin motivo escrito; esto la deja pendiente, con el suyo.
+    if (Date.now() >= deadline) {
+      results.push({ post_id: post.id, platform: post.platform, brand_id: post.brand_id, status: 'failed',
+        error: 'Run deadline reached before this post was attempted — still pending, retry' });
+      continue;
+    }
+
+    const result = await publishPost(post, deadline);
     results.push(result);
 
     // Actualizar status en Supabase
