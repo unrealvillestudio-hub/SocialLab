@@ -244,7 +244,7 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
                           error: `Carousel item ${hijos.length + 1} creation failed: ${t}` };
         const e = await esperarContenedorListo(post.brand_id, id, deadline);
         if (!e.listo) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
-                               error: `Carousel item ${hijos.length + 1} not publishable: ${e.error}` };
+                               error: `Carousel item ${hijos.length + 1} not publishable: ${'error' in e ? e.error : ''}` };
         hijos.push(id);
       }
       const padreRes = await mcpCall('ig_create_container', {
@@ -257,7 +257,7 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
                            error: `Carousel container creation failed: ${padreText}` };
       const listo = await esperarContenedorListo(post.brand_id, padre, deadline);
       if (!listo.listo) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
-                                 error: `Carousel container not publishable: ${listo.error}` };
+                                 error: `Carousel container not publishable: ${'error' in listo ? listo.error : ''}` };
       const pubText = extractMcpText(await mcpCall('ig_publish_container', { brand_id: post.brand_id, creation_id: padre }));
       let pid: string | null = null;
       try { pid = JSON.parse(pubText ?? '{}').id ?? null; } catch { /* no JSON */ }
