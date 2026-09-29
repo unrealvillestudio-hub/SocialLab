@@ -46,6 +46,17 @@ interface ScheduledPost {
   image_url: string | null;
   status: string;
   scheduled_at: string;
+  // CARRUSEL (2026-09-29) — lo escribe content-scheduler cuando la pieza es carrusel. NULL = una imagen.
+  media_type?: string | null;
+  media_urls?: string[] | null;
+}
+
+/** Las URL de un carrusel, si la fila lo declara. PURO. 2 a 10 en orden; si no, null (se publica como siempre). */
+export function carouselUrlsOf(post: Pick<ScheduledPost, 'media_type' | 'media_urls'>): string[] | null {
+  if (String(post.media_type ?? '').toUpperCase() !== 'CAROUSEL') return null;
+  const urls = (Array.isArray(post.media_urls) ? post.media_urls : [])
+    .filter((u) => typeof u === 'string' && /^https?:\/\//.test(u));
+  return urls.length >= 2 ? urls.slice(0, 10) : null;
 }
 
 interface PublishResult {
@@ -214,6 +225,60 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
   const platform = post.platform.toUpperCase();
 
   try {
+    const carrusel = carouselUrlsOf(post);
+
+    if (platform === 'INSTAGRAM' && carrusel) {
+      // CARRUSEL (2026-09-29). Un contenedor por lámina (`is_carousel_item`), cada uno ESPERADO hasta
+      // FINISHED —el mismo 9007 que el contenedor simple—, después el contenedor CAROUSEL con los
+      // hijos en orden, esperado también, y recién entonces se publica. Si una lámina falla, no se
+      // publica nada: un carrusel con láminas de menos no es el que se aprobó.
+      const hijos: string[] = [];
+      for (const url of carrusel) {
+        const r = await mcpCall('ig_create_container', {
+          brand_id: post.brand_id, image_url: url, media_type: 'IMAGE', is_carousel_item: true,
+        });
+        const t = extractMcpText(r);
+        let id: string | null = null;
+        try { id = JSON.parse(t ?? '{}').id ?? null; } catch { /* no JSON */ }
+        if (!id) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+                          error: `Carousel item ${hijos.length + 1} creation failed: ${t}` };
+        const e = await esperarContenedorListo(post.brand_id, id, deadline);
+        if (!e.listo) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+                               error: `Carousel item ${hijos.length + 1} not publishable: ${e.error}` };
+        hijos.push(id);
+      }
+      const padreRes = await mcpCall('ig_create_container', {
+        brand_id: post.brand_id, media_type: 'CAROUSEL', children: hijos, caption: post.copy_text,
+      });
+      const padreText = extractMcpText(padreRes);
+      let padre: string | null = null;
+      try { padre = JSON.parse(padreText ?? '{}').id ?? null; } catch { /* no JSON */ }
+      if (!padre) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+                           error: `Carousel container creation failed: ${padreText}` };
+      const listo = await esperarContenedorListo(post.brand_id, padre, deadline);
+      if (!listo.listo) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+                                 error: `Carousel container not publishable: ${listo.error}` };
+      const pubText = extractMcpText(await mcpCall('ig_publish_container', { brand_id: post.brand_id, creation_id: padre }));
+      let pid: string | null = null;
+      try { pid = JSON.parse(pubText ?? '{}').id ?? null; } catch { /* no JSON */ }
+      return { post_id: post.id, platform, brand_id: post.brand_id,
+               status: pid ? 'published' : 'failed', platform_post_id: pid ?? undefined,
+               error: pid ? undefined : `Carousel publish failed: ${pubText}` };
+    }
+
+    if (platform === 'FACEBOOK' && carrusel) {
+      // CARRUSEL en una Página = una publicación con N fotos en orden (MCP `fb_publish_photos`).
+      const fbText = extractMcpText(await mcpCall('fb_publish_photos', {
+        brand_id: post.brand_id, urls: carrusel, message: post.copy_text,
+      }));
+      console.log(`[CARRUSEL][FACEBOOK] post=${post.id} láminas=${carrusel.length} respuesta_cruda=${String(fbText).slice(0, 800)}`);
+      let pid: string | null = null;
+      try { const d = JSON.parse(fbText ?? '{}'); pid = d.post_id ?? d.id ?? null; } catch { /* no JSON */ }
+      return { post_id: post.id, platform, brand_id: post.brand_id,
+               status: pid ? 'published' : 'failed', platform_post_id: pid ? String(pid) : undefined,
+               error: pid ? undefined : `FB multi-photo publish failed (via fb_publish_photos): ${fbText}` };
+    }
+
     if (platform === 'INSTAGRAM') {
       // Paso 1: crear container
       const containerRes = await mcpCall('ig_create_container', {
