@@ -91,3 +91,41 @@ export function leerEstadoContenedor(texto: string | null): { estado: ContainerS
   };
 }
 
+
+// ── CREAR UN CONTENEDOR: EL FALLO TRANSITORIO SE REINTENTA (2026-09-30) ─────────
+//
+// EL CASO, medido el 2026-09-29 23:00 UTC: un carrusel de 6 láminas falló en la lámina 6 con
+// `Only photo or video can be accepted as media type. (code 9004)`. Las láminas 1–5 —mismo
+// formato, mismo tamaño, mismos parámetros— se crearon bien, y la MISMA URL de la lámina 6 creó su
+// contenedor al primer intento una hora después. Graph no pudo leer la imagen en ese instante:
+// es un fallo de descarga, no de la imagen. Sin reintento, un tropiezo de una sola llamada tiraba
+// el carrusel entero, porque un carrusel con láminas de menos no se publica.
+//
+// Sólo se reintenta lo que Graph marca como transitorio o lo que es, por su código, un fallo al
+// DESCARGAR el medio. Un error de permisos, de token o de parámetros no se reintenta: repetirlo
+// daría el mismo error más tarde.
+
+/** Esperas antes de cada reintento de creación. Dos reintentos: 3 s y 8 s. */
+export const CREATE_RETRY_WAITS_MS = [3_000, 8_000];
+
+/** Códigos de Graph que significan «no pude obtener el medio ahora», no «el medio es inválido». */
+const CODIGOS_TRANSITORIOS = ['9004', '2207003', '2207052', '1', '2'];
+
+/**
+ * ¿La respuesta de `ig_create_container` es un fallo que vale la pena reintentar? PURA.
+ * Una respuesta con `id` no es un fallo. Un texto sin código reconocible no se reintenta.
+ */
+export function esFalloTransitorioDeCreacion(texto: string | null): boolean {
+  if (!texto) return false;
+  try {
+    const p = JSON.parse(texto) as Record<string, unknown>;
+    if (typeof p.id === 'string' && p.id) return false;
+    if (p.is_transient === true) return true;
+    const e = p.error as Record<string, unknown> | undefined;
+    if (e?.is_transient === true) return true;
+    const code = e?.code ?? p.code;
+    if (code !== undefined && CODIGOS_TRANSITORIOS.includes(String(code))) return true;
+  } catch { /* texto plano: se lee abajo */ }
+  const m = texto.match(/\(code (\d+)\)/);
+  return !!m && CODIGOS_TRANSITORIOS.includes(m[1]);
+}
