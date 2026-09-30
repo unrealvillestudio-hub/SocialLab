@@ -21,7 +21,7 @@
 
 import {
   CONTAINER_TIMEOUT_MS, FIRST_CHECK_MS, CHECK_EVERY_MS, PUBLISH_DEADLINE_MS,
-  dormir, leerEstadoContenedor, type ContainerStatus,
+  CREATE_RETRY_WAITS_MS, dormir, leerEstadoContenedor, esFalloTransitorioDeCreacion, type ContainerStatus,
 } from './_igContainer.js';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -219,6 +219,31 @@ async function esperarContenedorListo(
     + 'Publishing now would fail with 9007.' };
 }
 
+/**
+ * Crea un contenedor de Instagram y reintenta SOLO si Graph falló de forma transitoria (ver
+ * `esFalloTransitorioDeCreacion`). Devuelve el id, o el último texto de Graph como motivo.
+ * Respeta el plazo de la corrida: si no queda tiempo para esperar, no reintenta.
+ */
+async function crearContenedorIg(
+  args: Record<string, unknown>, deadline: number,
+): Promise<{ id: string; intentos: number } | { id: null; texto: string | null; intentos: number }> {
+  let texto: string | null = null;
+  for (let intento = 0; intento <= CREATE_RETRY_WAITS_MS.length; intento++) {
+    if (intento > 0) {
+      const espera = CREATE_RETRY_WAITS_MS[intento - 1];
+      if (Date.now() + espera >= deadline) break;
+      console.warn(`[IG] creación de contenedor falló de forma transitoria, reintento ${intento} en ${espera} ms: ${String(texto).slice(0, 200)}`);
+      await dormir(espera);
+    }
+    texto = extractMcpText(await mcpCall('ig_create_container', args));
+    let id: string | null = null;
+    try { id = JSON.parse(texto ?? '{}').id ?? null; } catch { /* no JSON */ }
+    if (id) return { id, intentos: intento + 1 };
+    if (!esFalloTransitorioDeCreacion(texto)) return { id: null, texto, intentos: intento + 1 };
+  }
+  return { id: null, texto, intentos: CREATE_RETRY_WAITS_MS.length + 1 };
+}
+
 // ── PUBLISH PER PLATFORM ──────────────────────────────────────────────────────
 
 async function publishPost(post: ScheduledPost, deadline: number): Promise<PublishResult> {
@@ -234,14 +259,12 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
       // publica nada: un carrusel con láminas de menos no es el que se aprobó.
       const hijos: string[] = [];
       for (const url of carrusel) {
-        const r = await mcpCall('ig_create_container', {
+        const c = await crearContenedorIg({
           brand_id: post.brand_id, image_url: url, media_type: 'IMAGE', is_carousel_item: true,
-        });
-        const t = extractMcpText(r);
-        let id: string | null = null;
-        try { id = JSON.parse(t ?? '{}').id ?? null; } catch { /* no JSON */ }
-        if (!id) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
-                          error: `Carousel item ${hijos.length + 1} creation failed: ${t}` };
+        }, deadline);
+        if (!c.id) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+                            error: `Carousel item ${hijos.length + 1} creation failed after ${c.intentos} attempt(s): ${c.texto}` };
+        const id = c.id;
         const e = await esperarContenedorListo(post.brand_id, id, deadline);
         if (!e.listo) return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
                                error: `Carousel item ${hijos.length + 1} not publishable: ${'error' in e ? e.error : ''}` };
@@ -281,22 +304,17 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
 
     if (platform === 'INSTAGRAM') {
       // Paso 1: crear container
-      const containerRes = await mcpCall('ig_create_container', {
+      const creado = await crearContenedorIg({
         brand_id:  post.brand_id,
         caption:   post.copy_text,
         ...(post.image_url ? { image_url: post.image_url, media_type: 'IMAGE' } : {}),
-      });
+      }, deadline);
 
-      const containerText = extractMcpText(containerRes);
-      let creationId: string | null = null;
-      try {
-        const parsed = JSON.parse(containerText ?? '{}');
-        creationId = parsed.id ?? null;
-      } catch { /* no JSON */ }
-
-      if (!creationId) {
-        return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed', error: `Container creation failed: ${containerText}` };
+      if (!creado.id) {
+        return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+                 error: `Container creation failed after ${creado.intentos} attempt(s): ${creado.texto}` };
       }
+      const creationId: string = creado.id;
 
       // Paso 2: ESPERAR a que el contenedor este listo.
       //

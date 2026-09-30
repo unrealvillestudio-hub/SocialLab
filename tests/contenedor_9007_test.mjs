@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { leerEstadoContenedor } from '../api/_igContainer.ts';
+import { leerEstadoContenedor, esFalloTransitorioDeCreacion, CREATE_RETRY_WAITS_MS } from '../api/_igContainer.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /**
@@ -174,6 +174,43 @@ test('nada de esto nombra una marca', () => {
   for (const marca of ['unrealvillestudio', 'neuronescf', 'forumphs', 'luciensael']) {
     assert.ok(!t.includes(marca), `se nombra la marca «${marca}» fuera de un comentario`);
   }
+});
+
+// ── 6 · Crear un contenedor: el fallo transitorio se reintenta (2026-09-30) ───
+
+test('el 9004 del carrusel del 29-sep (Graph no pudo leer la imagen) se reintenta', () => {
+  assert.equal(esFalloTransitorioDeCreacion('Error: Meta API: Only photo or video can be accepted as media type. (code 9004)'), true);
+  assert.equal(esFalloTransitorioDeCreacion(respuesta({ error: { code: 9004, message: 'x' } })), true);
+});
+
+test('fallos de descarga y temporales de Graph se reintentan', () => {
+  for (const code of [2207003, 2207052, 1, 2]) assert.equal(esFalloTransitorioDeCreacion(respuesta({ error: { code } })), true, `code ${code}`);
+  assert.equal(esFalloTransitorioDeCreacion(respuesta({ error: { code: 999, is_transient: true } })), true);
+});
+
+test('permisos, token o parámetros NO se reintentan: repetirlos da el mismo error', () => {
+  for (const code of [190, 10, 100, 200, 24, 36003]) assert.equal(esFalloTransitorioDeCreacion(respuesta({ error: { code } })), false, `code ${code}`);
+  assert.equal(esFalloTransitorioDeCreacion('Error: Meta API: Invalid parameter (code 100)'), false);
+});
+
+test('una respuesta con id no es un fallo, y nada ilegible se reintenta', () => {
+  assert.equal(esFalloTransitorioDeCreacion(respuesta({ id: '123' })), false);
+  assert.equal(esFalloTransitorioDeCreacion(null), false);
+  assert.equal(esFalloTransitorioDeCreacion('texto sin código'), false);
+});
+
+test('los reintentos son pocos y caben en el plazo de la corrida', () => {
+  assert.ok(CREATE_RETRY_WAITS_MS.length >= 1 && CREATE_RETRY_WAITS_MS.length <= 3);
+  const total = CREATE_RETRY_WAITS_MS.reduce((a, b) => a + b, 0);
+  assert.ok(total < 30_000, `esperas de reintento demasiado largas: ${total} ms`);
+});
+
+test('toda creación de contenedor de Instagram pasa por el reintento, y respeta el plazo', () => {
+  const directas = (CODIGO.match(/mcpCall\('ig_create_container'/g) ?? []).length;
+  assert.equal(directas, 2, 'se esperan dos llamadas directas: la del helper de reintento y la del contenedor CAROUSEL');
+  assert.ok(/crearContenedorIg\(\{\s*brand_id: post\.brand_id, image_url: url/.test(CODIGO), 'las láminas del carrusel no usan el reintento');
+  assert.ok(/const creado = await crearContenedorIg\(/.test(CODIGO), 'el contenedor simple no usa el reintento');
+  assert.ok(/if \(Date\.now\(\) \+ espera >= deadline\) break;/.test(CODIGO), 'el reintento ignora el plazo de la corrida');
 });
 
 // ── Resumen ───────────────────────────────────────────────────────────────────
