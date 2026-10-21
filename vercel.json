@@ -6,5 +6,26 @@
     "api/publish.ts": {
       "maxDuration": 300
     }
-  }
+  },
+  "redirects": [
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": { "pre": "circulo." } }],
+      "destination": "/guia",
+      "permanent": false
+    },
+    {
+      "source": "/:path((?!guia$|crear$|operador$|api/circle-kit$).+)",
+      "has": [{ "type": "host", "value": { "pre": "circulo." } }],
+      "destination": "/guia",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/:doc(guia|crear|operador)",
+      "has": [{ "type": "host", "value": { "pre": "circulo." } }],
+      "destination": "/api/circle-kit?doc=:doc"
+    }
+  ]
 }
