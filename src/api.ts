@@ -1,0 +1,66 @@
+// Cliente del tablero. Todo pasa por la API de SocialLab (`/api/session`, `/api/ops`): el navegador
+// nunca lee la base ni las plataformas directamente.
+
+export interface Sesion { session_token: string; sub: string; role: string; brand_scope: string[]; expires_in: number }
+
+export class ErrorApi extends Error {
+  constructor(message: string, public status: number) { super(message); }
+}
+
+async function leer<T>(res: Response): Promise<T> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ErrorApi(String((data as any)?.error ?? (data as any)?.detail ?? `Error ${res.status}`), res.status);
+  return data as T;
+}
+
+export async function entrar(password: string): Promise<Sesion> {
+  return leer<Sesion>(await fetch('/api/session', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+  }));
+}
+
+export async function ops<T>(token: string, vista: string, params: Record<string, string | undefined> = {}): Promise<T> {
+  const qs = new URLSearchParams({ vista });
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  return leer<T>(await fetch(`/api/ops?${qs}`, { headers: { Authorization: `Bearer ${token}` } }));
+}
+
+// ── Formas de las respuestas ─────────────────────────────────────────────────
+
+export interface Marca { brand_id: string; nombre: string; huso: string | null; plataformas_en_vivo: string[] }
+export interface Catalogo { sub: string; role: string; marcas: Marca[]; alcance_total: boolean }
+
+export interface Metrica { metric: string; value: number; age_minutes: number; fetched_at: string }
+export interface Conteo { brand_id: string; platform: string; formato: string; total: number }
+
+export interface Publicada {
+  id: string; brand_id: string; platform: string; media_type: string | null; formato: string;
+  platform_post_id: string | null; published_at: string; copy_text: string | null; image_url: string | null;
+  media_urls: string[] | null; piece_id: string | null; enlace?: string | null; metricas: Metrica[];
+}
+export interface RespPublicado {
+  ventana: { desde: string; hasta: string }; truncado: boolean; total: number; conteos: Conteo[];
+  metricas: 'medidas' | 'tabla_inexistente'; publicaciones: Publicada[];
+}
+
+export interface EnVivo {
+  brand_id: string; platform: string; platform_post_id: string; permalink: string | null; imagen: string | null;
+  texto: string | null; publicado_en: string | null; formato: string; scheduled_post_id: string | null;
+  piece_id: string | null; en_carril: boolean;
+}
+export interface RespEnVivo {
+  limite: number; lecturas: Array<{ brand_id: string; platform: string; publicaciones: number; error: string | null }>;
+  publicaciones: EnVivo[];
+}
+
+export interface Franja {
+  id: string; brand_id: string; platform_key: string; slot_at: string; status: string; format: string | null;
+  piece_id: string | null; published_at: string | null; failed_reason: string | null;
+}
+export interface FilaCalendario {
+  id: string; brand_id: string; platform: string; status: string; media_type: string | null; scheduled_at: string;
+  published_at: string | null; piece_id: string | null; platform_post_id: string | null;
+}
+export interface RespCalendario { ventana: { desde: string; hasta: string }; franjas: Franja[]; publicaciones: FilaCalendario[] }
+
+export interface RespAhora { minutos: number; estado: 'sin_medir' | 'sin_orden'; motivo: string; publicaciones: Publicada[] }

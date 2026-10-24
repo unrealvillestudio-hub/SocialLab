@@ -13,3 +13,9 @@
   }
   * { box-sizing: border-box; }
 }
+
+@layer components {
+  .entrada {
+    @apply bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-accent/60;
+  }
+}
