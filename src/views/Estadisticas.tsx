@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Lock, Users } from 'lucide-react';
 import { ops, type Estadistica, type Marca, type RespEstadisticas, type ResumenCuenta } from '../api';
+import { PillAsesorDeCuenta } from '../ui/Pulso';
 import { Aviso, Cargando, Chip, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
 
 /**
@@ -92,6 +93,7 @@ function Tarjeta({ e, c, nombre, huso, cuenta }: {
             <Users className="w-4 h-4 text-accent" /><b className="titulo text-2xl">{numero(c.seguidores.value)}</b><span className="text-[11px] text-zinc-500">{c.seguidores.value === 1 ? 'seguidor' : 'seguidores'}</span>
           </span>
         )}
+        <PillAsesorDeCuenta brand_id={(e ?? c)!.brand_id} platform={platform} />
         {e && <span className="ml-auto text-[11px] text-zinc-500">{e.publicaciones} publicadas · {e.medidas} medidas</span>}
       </header>
 

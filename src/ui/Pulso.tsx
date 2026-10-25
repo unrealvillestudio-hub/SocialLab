@@ -1,10 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BellRing, ExternalLink, MessageCircle, X } from 'lucide-react';
-import { comentarios as leerComentarios, ops, type EnVivo, type Marca, type RespEnVivo } from '../api';
+import {
+  cambiarTarjeta, comentarios as leerComentarios, ops, tarjetas as leerTarjetas,
+  type Comentario, type EnVivo, type Marca, type RespEnVivo, type Tarjeta,
+} from '../api';
+import { agruparTarjetas, claveDeCuenta } from '../asesor';
 import {
   aumentosDeComentarios, combinarMetricas, cuentasActivas, fusionarLectura, planDeLectura, METRICA_COMENTARIOS, type MetricaMedida,
 } from '../pulso';
-import { Pills } from './Pills';
+import { PillAsesor, Pills } from './Pills';
 import { etiquetaPlataforma } from './components';
 
 /**
@@ -16,6 +20,8 @@ import { etiquetaPlataforma } from './components';
  * · Comentarios: `/api/comments` cada minuto. Lo que espera respuesta se cuenta por publicación.
  * · Comentario nuevo: el contador en vivo de un post sube, o aparece en la bandeja un comentario
  *   pendiente que esta sesión no había visto. Abre el aviso hasta que el operador lo atiende.
+ * · Asesor: `/api/tarjetas` cada minuto. Cada tarjeta viaja con su publicación (o con su cuenta) y se
+ *   muestra como una pill especial; abrirla la marca «vista» para todos y lleva a la pestaña Acciones.
  */
 
 const REFRESCO_MS = 60_000;
@@ -36,7 +42,16 @@ interface Pulso {
   pendientesPorPost: Map<string, number>; pendientes: number;
   nuevos: Nuevo[]; nuevosPorPost: Set<string>;
   atender: (scheduledPostId: string | null) => void; descartar: () => void;
+  /** Asesor: las tarjetas abiertas, por publicación y por cuenta (`marca|PLATAFORMA`). */
+  tarjetas: Tarjeta[]; tarjetasNuevas: number; tarjetasPorPost: Map<string, Tarjeta[]>; tarjetasPorCuenta: Map<string, Tarjeta[]>;
+  comentariosPorId: Map<number, Comentario>;
+  abrirAsesor: (foco: FocoAsesor) => void;
+  marcarTarjeta: (id: string, status: 'seguida' | 'descartada') => Promise<void>;
+  recargarTarjetas: () => void;
 }
+
+/** Lo que se abre en la pestaña Acciones: una publicación, una cuenta, o todo. */
+export type FocoAsesor = { post: string } | { cuenta: string } | null;
 
 const Ctx = createContext<Pulso | null>(null);
 export const usePulso = () => {
@@ -56,8 +71,9 @@ function useVisible(): boolean {
   return v;
 }
 
-export function ProveedorPulso({ token, marca, onAtender, children }: {
-  token: string; marca: string; onAtender: (scheduledPostId: string | null) => void; children: React.ReactNode;
+export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: {
+  token: string; marca: string; onAtender: (scheduledPostId: string | null) => void;
+  onAsesor: (foco: FocoAsesor) => void; children: React.ReactNode;
 }) {
   const visible = useVisible();
   const [tick, setTick] = useState(0);
@@ -67,6 +83,9 @@ export function ProveedorPulso({ token, marca, onAtender, children }: {
   const [leidoVivoEn, setLeidoVivoEn] = useState<number | null>(null);
   const [pendientesPorPost, setPendientesPorPost] = useState<Map<string, number>>(new Map());
   const [nuevos, setNuevos] = useState<Nuevo[]>([]);
+  const [listaTarjetas, setListaTarjetas] = useState<Tarjeta[]>([]);
+  const [comentariosPorId, setComentariosPorId] = useState<Map<number, Comentario>>(new Map());
+  const [tickTarjetas, setTickTarjetas] = useState(0);
   const contadoresPrevios = useRef<Map<string, number> | null>(null);
   const pendientesVistos = useRef<Set<number> | null>(null);
 
@@ -127,6 +146,7 @@ export function ProveedorPulso({ token, marca, onAtender, children }: {
     leerComentarios(token, { marca: marca || undefined, desde: new Date(Date.now() - DIAS_BANDEJA * DIA).toISOString() })
       .then((r) => {
         if (!activo) return;
+        setComentariosPorId(new Map(r.comentarios.map((c) => [c.id, c])));
         const esperan = r.comentarios.filter((c) => !c.from_brand && ESPERAN.has(c.estado));
         const porPost = new Map<string, number>();
         for (const c of esperan) if (c.scheduled_post_id) porPost.set(c.scheduled_post_id, (porPost.get(c.scheduled_post_id) ?? 0) + 1);
@@ -147,7 +167,38 @@ export function ProveedorPulso({ token, marca, onAtender, children }: {
     return () => { activo = false; };
   }, [token, marca, tick, sumar]);
 
+  useEffect(() => {
+    if (tick === 0) return;
+    let activo = true;
+    leerTarjetas(token, { marca: marca || undefined })
+      .then((r) => { if (activo) setListaTarjetas(r.tarjetas); })
+      .catch((e) => console.error('[pulso] tarjetas del asesor:', e instanceof Error ? e.message : e));
+    return () => { activo = false; };
+  }, [token, marca, tick, tickTarjetas]);
+
   const pendientes = useMemo(() => [...pendientesPorPost.values()].reduce((s, n) => s + n, 0), [pendientesPorPost]);
+  const grupos = useMemo(
+    () => agruparTarjetas(listaTarjetas, (id) => comentariosPorId.get(id)?.scheduled_post_id),
+    [listaTarjetas, comentariosPorId]);
+
+  const actualizarLocal = (t: Tarjeta) => setListaTarjetas((xs) => xs.map((x) => (x.id === t.id ? { ...x, ...t, accion: x.accion } : x)));
+
+  // Abrir: las tarjetas NUEVAS de ese foco pasan a «vista» (para todos los operadores) y se va a Acciones.
+  const abrirAsesor = useCallback((foco: FocoAsesor) => {
+    const delFoco = !foco ? [] : 'post' in foco ? grupos.porPost.get(foco.post) ?? [] : grupos.porCuenta.get(foco.cuenta) ?? [];
+    for (const t of delFoco.filter((x) => x.status === 'nueva')) {
+      setListaTarjetas((xs) => xs.map((x) => (x.id === t.id ? { ...x, status: 'vista' } : x)));
+      cambiarTarjeta(token, t.id, 'vista').then((r) => actualizarLocal(r.tarjeta))
+        .catch((e) => console.error('[pulso] marcar vista:', e instanceof Error ? e.message : e));
+    }
+    onAsesor(foco);
+  }, [grupos, token, onAsesor]);
+
+  const marcarTarjeta = useCallback(async (id: string, status: 'seguida' | 'descartada') => {
+    const r = await cambiarTarjeta(token, id, status);
+    if (status === 'descartada') setListaTarjetas((xs) => xs.filter((x) => x.id !== id));
+    else actualizarLocal(r.tarjeta);
+  }, [token]);
 
   // El título de la pestaña del navegador lleva la cuenta: se ve aunque el operador esté en otra.
   useEffect(() => {
@@ -163,7 +214,11 @@ export function ProveedorPulso({ token, marca, onAtender, children }: {
     nuevosPorPost: new Set(nuevos.flatMap((n) => (n.scheduled_post_id ? [n.scheduled_post_id] : []))),
     atender: (id) => { setNuevos((xs) => xs.filter((x) => x.scheduled_post_id !== id)); onAtender(id); },
     descartar: () => setNuevos([]),
-  }), [vivo, errorVivo, cargandoVivo, leidoVivoEn, pendientesPorPost, pendientes, nuevos, onAtender]);
+    tarjetas: listaTarjetas, tarjetasNuevas: listaTarjetas.filter((t) => t.status === 'nueva').length,
+    tarjetasPorPost: grupos.porPost, tarjetasPorCuenta: grupos.porCuenta, comentariosPorId,
+    abrirAsesor, marcarTarjeta, recargarTarjetas: () => setTickTarjetas((n) => n + 1),
+  }), [vivo, errorVivo, cargandoVivo, leidoVivoEn, pendientesPorPost, pendientes, nuevos, onAtender,
+    listaTarjetas, grupos, comentariosPorId, abrirAsesor, marcarTarjeta]);
 
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>;
 }
@@ -217,10 +272,22 @@ export function AvisoComentarios({ marcas }: { marcas: Marca[] }) {
 export function PillsDePost({ id, platformPostId, metricas, sinMedir }: {
   id: string; platformPostId: string | null; metricas: MetricaMedida[]; sinMedir?: string;
 }) {
-  const { vivoPorId, pendientesPorPost, nuevosPorPost, atender } = usePulso();
+  const { vivoPorId, pendientesPorPost, nuevosPorPost, atender, tarjetasPorPost, abrirAsesor } = usePulso();
   const enVivo = platformPostId ? vivoPorId.get(platformPostId)?.contadores : undefined;
+  const consejos = tarjetasPorPost.get(id) ?? [];
   return (
-    <Pills metricas={combinarMetricas(metricas, enVivo)} sinMedir={sinMedir}
-      comentarios={{ pendientes: pendientesPorPost.get(id) ?? 0, nuevo: nuevosPorPost.has(id), onClick: () => atender(id) }} />
+    <div className="flex flex-wrap items-center gap-1.5">
+      {consejos.length > 0 && <PillAsesor tarjetas={consejos} onClick={() => abrirAsesor({ post: id })} />}
+      <Pills metricas={combinarMetricas(metricas, enVivo)} sinMedir={sinMedir}
+        comentarios={{ pendientes: pendientesPorPost.get(id) ?? 0, nuevo: nuevosPorPost.has(id), onClick: () => atender(id) }} />
+    </div>
   );
+}
+
+/** La pill del asesor de una cuenta (Estadísticas): los consejos que no son de una publicación. */
+export function PillAsesorDeCuenta({ brand_id, platform }: { brand_id: string; platform: string }) {
+  const { tarjetasPorCuenta, abrirAsesor } = usePulso();
+  const k = claveDeCuenta(brand_id, platform);
+  const ts = tarjetasPorCuenta.get(k) ?? [];
+  return ts.length ? <PillAsesor tarjetas={ts} onClick={() => abrirAsesor({ cuenta: k })} /> : null;
 }

@@ -112,6 +112,8 @@ export interface ResumenCuenta {
 export type EstadoComentario = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'de_la_marca';
 export interface RespuestaComentario {
   id: string; post_comment_id: number; status: 'requested' | 'sent' | 'verified' | 'failed';
+  /** `publica` (en el hilo) o `privada` (mensaje a quien comentó). */
+  kind?: 'publica' | 'privada';
   message: string | null; requested_by: string | null; requested_at: string;
   platform_reply_id: string | null; sent_at: string | null; verified_at: string | null; error: string | null;
 }
@@ -120,6 +122,8 @@ export interface Comentario {
   platform_post_id: string; parent_comment_id: string | null; author_name: string | null; from_brand: boolean;
   text: string | null; like_count: number | null; commented_at: string; first_seen_at: string | null;
   estado: EstadoComentario; respuestas: RespuestaComentario[];
+  /** Si se puede responder en privado a quien comentó y, si no, por qué (SocialLab #20). */
+  privada?: { puede: boolean; motivo: string | null; hasta: string | null };
 }
 export interface RespComentarios {
   ventana: { desde: string; hasta: string }; total: number; pendientes: number; truncado: boolean; comentarios: Comentario[];
@@ -131,10 +135,38 @@ export async function comentarios(token: string, params: Record<string, string |
   return leer<RespComentarios>(await fetch(`/api/comments?${qs}`, { headers: { Authorization: `Bearer ${token}` } }));
 }
 
-export async function responderComentario(token: string, postCommentId: number, message: string): Promise<{ respuesta: RespuestaComentario }> {
+export async function responderComentario(token: string, postCommentId: number, message: string, privada = false): Promise<{ respuesta: RespuestaComentario }> {
   return leer(await fetch('/api/comments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ post_comment_id: postCommentId, message }),
+    body: JSON.stringify({ post_comment_id: postCommentId, message, ...(privada ? { privada: true } : {}) }),
+  }));
+}
+
+// ── Asesor (`/api/tarjetas`, tarjetas de acción de SignalLab) ─────────────────
+
+export type Severidad = 'atencion' | 'oportunidad' | 'info';
+export type EstadoTarjeta = 'nueva' | 'vista' | 'seguida' | 'descartada' | 'resuelta';
+export interface Tarjeta {
+  id: string; rule_key: string; card_type: string; severity: Severidad; brand_id: string; platform: string;
+  scheduled_post_id: string | null; post_comment_id: number | null; action_key: string;
+  objective: string; what_text: string; why_text: string;
+  metric: string | null; value: number | null; baseline_value: number | null; baseline_level: string | null; baseline_size: number | null;
+  status: EstadoTarjeta; status_by: string | null; status_at: string | null; created_at: string;
+  accion: { label: string; via: 'api' | 'app_nativa' | 'interna' };
+}
+export interface RespTarjetas { truncado: boolean; nuevas: number; tarjetas: Tarjeta[] }
+
+export async function tarjetas(token: string, params: Record<string, string | undefined> = {}): Promise<RespTarjetas> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  return leer<RespTarjetas>(await fetch(`/api/tarjetas?${qs}`, { headers: { Authorization: `Bearer ${token}` } }));
+}
+
+export async function cambiarTarjeta(token: string, id: string, status: 'vista' | 'seguida' | 'descartada'): Promise<{ tarjeta: Tarjeta }> {
+  return leer(await fetch('/api/tarjetas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id, status }),
   }));
 }

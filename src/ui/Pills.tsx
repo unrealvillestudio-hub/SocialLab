@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cn } from './components';
+import { Sparkles } from 'lucide-react';
 import { METRICA_COMENTARIOS } from '../pulso';
+import { severidadMayor } from '../asesor';
 
 /**
  * PILLS DE MÉTRICAS, con premio animado (pedido de Sam, 2026-10-25: «que cuando cambien de valor se
@@ -90,5 +92,28 @@ export function Pills({ metricas, sinMedir = 'sin medir', comentarios }: {
           comentarios={m.metric === METRICA_COMENTARIOS ? comentarios : undefined} />
       ))}
     </div>
+  );
+}
+
+/** El color de la pill del asesor dice la urgencia (Sam, 2026-10-25): ámbar atención, cian oportunidad, chalk info. */
+const COLOR_SEVERIDAD: Record<string, string> = { atencion: 'pill-asesor-atencion', oportunidad: 'pill-asesor-oportunidad', info: 'pill-asesor-info' };
+const ETIQUETA_SEVERIDAD: Record<string, string> = { atencion: 'atención', oportunidad: 'oportunidad', info: 'info' };
+
+/**
+ * LA PILL DEL ASESOR · especial: late sin parar mientras haya un consejo NUEVO y deja de latir cuando
+ * alguien lo abre (la tarjeta pasa a «vista» para todos). Abrirla lleva la publicación a Acciones.
+ */
+export function PillAsesor({ tarjetas, onClick }: { tarjetas: { severity: string; status: string }[]; onClick: () => void }) {
+  const sev = severidadMayor(tarjetas) ?? 'info';
+  const nuevas = tarjetas.filter((t) => t.status === 'nueva').length;
+  return (
+    <button type="button" onClick={onClick}
+      title={`${tarjetas.length} ${tarjetas.length === 1 ? 'consejo' : 'consejos'} del asesor (${ETIQUETA_SEVERIDAD[sev] ?? sev})${nuevas ? ` · ${nuevas} sin abrir` : ''}`}
+      className={cn('pill pill-asesor pill-accion', COLOR_SEVERIDAD[sev] ?? 'pill-asesor-info', nuevas > 0 && 'pill-asesor-nueva')}>
+      <Sparkles className="w-3 h-3" />
+      <span className="pill-etiqueta">asesor</span>
+      <b className="pill-valor">{tarjetas.length}</b>
+      {nuevas > 0 && <span className="pill-insignia pill-insignia-nuevo">nuevo</span>}
+    </button>
   );
 }
