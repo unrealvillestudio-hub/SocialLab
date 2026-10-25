@@ -25,7 +25,12 @@ export interface Respuesta {
   post_comment_id: number;
   status: 'requested' | 'sent' | 'verified' | 'failed';
   requested_at: string;
+  /** `publica` (en el hilo) o `privada` (mensaje a quien comentó). Sin el campo, `publica`. */
+  kind?: 'publica' | 'privada';
 }
+
+export type Clase = 'publica' | 'privada';
+const claseDe = (r: Respuesta): Clase => (r.kind === 'privada' ? 'privada' : 'publica');
 
 export type Estado = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'de_la_marca';
 
@@ -97,8 +102,8 @@ export function mensajeValido(m: unknown): string {
 }
 
 /** ¿Hay una respuesta pedida o enviada hace menos de `MINUTOS_EN_VUELO`? Evita el doble envío. */
-export function hayEnVuelo(respuestas: readonly Respuesta[], ahora = Date.now()): boolean {
-  return respuestas.some((r) => (r.status === 'requested' || r.status === 'sent')
+export function hayEnVuelo(respuestas: readonly Respuesta[], ahora = Date.now(), clase: Clase = 'publica'): boolean {
+  return respuestas.some((r) => claseDe(r) === clase && (r.status === 'requested' || r.status === 'sent')
     && ahora - Date.parse(r.requested_at) < MINUTOS_EN_VUELO * 60_000);
 }
 
@@ -106,3 +111,29 @@ export function hayEnVuelo(respuestas: readonly Respuesta[], ahora = Date.now())
 export function verificada(leida: unknown, idRespuesta: string | null | undefined): boolean {
   return !!idRespuesta && !!leida && typeof leida === 'object' && (leida as { id?: unknown }).id === idRespuesta;
 }
+
+/**
+ * ¿Se puede responder en privado a este comentario? La plataforma lo permite una vez por comentario y dentro de su
+ * ventana (`intel.signal_platforms.private_reply_window_minutes`, dato). El motivo va al tablero tal cual: «no se puede»
+ * siempre dice por qué.
+ */
+export function privadaDisponible(
+  c: Pick<Comentario, 'from_brand' | 'commented_at'>,
+  respuestas: readonly Respuesta[],
+  ventanaMinutos: number | null,
+  ahora = Date.now(),
+): { puede: boolean; motivo: string | null; hasta: string | null } {
+  if (c.from_brand) return { puede: false, motivo: 'es un comentario de la propia marca', hasta: null };
+  if (!ventanaMinutos) return { puede: false, motivo: 'la plataforma no tiene respuesta privada configurada', hasta: null };
+  const t = Date.parse(c.commented_at);
+  if (Number.isNaN(t)) return { puede: false, motivo: 'fecha del comentario ilegible', hasta: null };
+  const hasta = new Date(t + ventanaMinutos * 60_000).toISOString();
+  if (respuestas.some((r) => claseDe(r) === 'privada' && r.status !== 'failed')) {
+    return { puede: false, motivo: 'ya tiene una respuesta privada', hasta };
+  }
+  if (ahora > t + ventanaMinutos * 60_000) return { puede: false, motivo: 'pasó la ventana de la plataforma', hasta };
+  return { puede: true, motivo: null, hasta };
+}
+
+/** La respuesta privada va a la persona de ESE comentario, no al primer nivel del hilo. */
+export const objetivoDePrivada = (c: Pick<Comentario, 'platform_comment_id'>): string => c.platform_comment_id;
