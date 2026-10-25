@@ -5,7 +5,7 @@
  *   3 · el operador sólo pide vista · seguida · descartada; `resuelta` es del sistema; abrir dos veces no cambia nada.
  */
 import assert from 'node:assert/strict';
-import { visiblePara, ordenarTarjetas, cambioDeEstado } from '../api/_asesorCore.ts';
+import { visiblePara, ordenarTarjetas, cambioDeEstado, cambioDeRecomendacion, textoEnviado } from '../api/_asesorCore.ts';
 import { agruparTarjetas, severidadMayor } from '../src/asesor.ts';
 
 let fallos = 0;
@@ -55,6 +55,19 @@ test('4 · cada tarjeta viaja con su publicación; la de comentario, con el post
   assert.deepEqual(porCuenta.get('m|INSTAGRAM').map((x) => x.id), ['c', 'd'], 'un comentario sin post conocido va a su cuenta, no se pierde');
   assert.equal(severidadMayor([{ severity: 'info' }, { severity: 'atencion' }, { severity: 'oportunidad' }]), 'atencion');
   assert.equal(severidadMayor([]), null);
+});
+
+test('5 · recomendaciones: el operador sólo sigue o descarta; caducada es del sistema; lo enviado se guarda tal cual', () => {
+  assert.deepEqual(cambioDeRecomendacion('nueva', 'seguida'), { ok: true });
+  assert.deepEqual(cambioDeRecomendacion('nueva', 'descartada'), { ok: true });
+  assert.deepEqual(cambioDeRecomendacion('seguida', 'seguida'), { noop: true });
+  assert.ok('error' in cambioDeRecomendacion('nueva', 'caducada'), 'caducada la pone el sistema');
+  assert.ok('error' in cambioDeRecomendacion('caducada', 'seguida'));
+  assert.ok('error' in cambioDeRecomendacion('descartada', 'seguida'));
+  assert.equal(textoEnviado('  hola  '), 'hola');
+  assert.equal(textoEnviado(''), null);
+  assert.equal(textoEnviado(42), null);
+  assert.equal(textoEnviado('x'.repeat(6000)).length, 5000);
 });
 
 if (fallos) { console.error(`\nasesor: ${fallos} fallo(s)`); process.exit(1); }

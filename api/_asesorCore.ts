@@ -57,3 +57,32 @@ export function cambioDeEstado(actual: string, nuevo: string): { error: string }
   if (actual === nuevo) return { noop: true };
   return { ok: true };
 }
+
+// ── Recomendaciones del asesor (`intel.social_advisor_recommendations`, SignalLab 2026-10-25) ───────
+//
+// El asesor escribe una recomendación para el operador y, a veces, un borrador. Estados: nueva |
+// seguida | descartada | caducada (esta última la pone el sistema). Cuando el operador envía el borrador,
+// se guarda en `sent_text` lo que de verdad salió: así se mide cuánto se edita.
+
+export type EstadoRecomendacion = 'nueva' | 'seguida' | 'descartada' | 'caducada';
+
+/**
+ * Las que se muestran. SignalLab pidió (2026-10-25) mostrar sólo las `nueva` mientras no entre su
+ * arreglo iid #493 (respuestas de la marca guardadas como ajenas en Instagram; enlaces inventados).
+ */
+export const RECOMENDACIONES_VISIBLES: readonly EstadoRecomendacion[] = ['nueva'];
+
+/** ¿Puede el operador pasar la recomendación de `actual` a `nuevo`? */
+export function cambioDeRecomendacion(actual: string, nuevo: string): { error: string } | { noop: true } | { ok: true } {
+  if (nuevo !== 'seguida' && nuevo !== 'descartada') return { error: `estado no permitido para un operador: «${nuevo}»` };
+  if (actual === 'caducada' || actual === 'descartada') return { error: `la recomendación ya está ${actual}` };
+  if (actual === nuevo) return { noop: true };
+  return { ok: true };
+}
+
+/** Lo que se envió de verdad: recortado y con tope, o null si no se envió nada. */
+export function textoEnviado(v: unknown, max = 5000): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t ? t.slice(0, max) : null;
+}

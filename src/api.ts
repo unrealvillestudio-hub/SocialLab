@@ -155,7 +155,16 @@ export interface Tarjeta {
   status: EstadoTarjeta; status_by: string | null; status_at: string | null; created_at: string;
   accion: { label: string; via: 'api' | 'app_nativa' | 'interna' };
 }
-export interface RespTarjetas { truncado: boolean; nuevas: number; tarjetas: Tarjeta[] }
+/** Una recomendación del asesor: texto para el operador y, a veces, un borrador de respuesta. */
+export interface Recomendacion {
+  id: string; brand_id: string; platform: string | null; card_id: string | null;
+  post_comment_id: number | null; scheduled_post_id: string | null; action_key: string;
+  objective: string; recommendation: string; draft: string | null;
+  status: 'nueva' | 'seguida' | 'descartada' | 'caducada'; status_by: string | null; status_at: string | null;
+  sent_text: string | null; created_at: string;
+  accion: { label: string; via: 'api' | 'app_nativa' | 'interna' };
+}
+export interface RespTarjetas { truncado: boolean; nuevas: number; tarjetas: Tarjeta[]; recomendaciones?: Recomendacion[] }
 
 export async function tarjetas(token: string, params: Record<string, string | undefined> = {}): Promise<RespTarjetas> {
   const qs = new URLSearchParams();
@@ -168,5 +177,23 @@ export async function cambiarTarjeta(token: string, id: string, status: 'vista' 
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ id, status }),
+  }));
+}
+
+/** Seguir o descartar una recomendación. `sent_text` es lo que de verdad se envió (para medir la edición del borrador). */
+export async function cambiarRecomendacion(token: string, id: string, status: 'seguida' | 'descartada', sentText?: string): Promise<unknown> {
+  return leer(await fetch('/api/tarjetas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ tipo: 'recomendacion', id, status, ...(sentText ? { sent_text: sentText } : {}) }),
+  }));
+}
+
+/** Pone en cola un despertar del asesor para una marca. 409 = ya hay uno en cola. */
+export async function pedirConsejo(token: string, marca: string): Promise<unknown> {
+  return leer(await fetch('/api/tarjetas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ tipo: 'despertar', marca }),
   }));
 }

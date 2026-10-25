@@ -1,10 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BellRing, ExternalLink, MessageCircle, X } from 'lucide-react';
 import {
-  cambiarTarjeta, comentarios as leerComentarios, ops, tarjetas as leerTarjetas,
-  type Comentario, type EnVivo, type Marca, type RespEnVivo, type Tarjeta,
+  cambiarRecomendacion, cambiarTarjeta, comentarios as leerComentarios, ops, pedirConsejo as pedirConsejoApi, tarjetas as leerTarjetas,
+  type Comentario, type EnVivo, type Marca, type Recomendacion, type RespEnVivo, type Tarjeta,
 } from '../api';
-import { agruparTarjetas, claveDeCuenta } from '../asesor';
+import { agruparTarjetas, claveDeCuenta, marcaDePill } from '../asesor';
 import {
   aumentosDeComentarios, combinarMetricas, cuentasActivas, fusionarLectura, planDeLectura, METRICA_COMENTARIOS, type MetricaMedida,
 } from '../pulso';
@@ -20,7 +20,8 @@ import { etiquetaPlataforma } from './components';
  * · Comentarios: `/api/comments` cada minuto. Lo que espera respuesta se cuenta por publicación.
  * · Comentario nuevo: el contador en vivo de un post sube, o aparece en la bandeja un comentario
  *   pendiente que esta sesión no había visto. Abre el aviso hasta que el operador lo atiende.
- * · Asesor: `/api/tarjetas` cada minuto. Cada tarjeta viaja con su publicación (o con su cuenta) y se
+ * · Asesor: `/api/tarjetas` cada minuto: tarjetas de SignalLab y recomendaciones (con borrador) del asesor.
+ *   Cada una viaja con su publicación (o con su cuenta) y se
  *   muestra como una pill especial; abrirla la marca «vista» para todos y lleva a la pestaña Acciones.
  */
 
@@ -48,6 +49,13 @@ interface Pulso {
   abrirAsesor: (foco: FocoAsesor) => void;
   marcarTarjeta: (id: string, status: 'seguida' | 'descartada') => Promise<void>;
   recargarTarjetas: () => void;
+  /** Recomendaciones del asesor, agrupadas igual que las tarjetas. */
+  recomendaciones: Recomendacion[]; recosPorPost: Map<string, Recomendacion[]>; recosPorCuenta: Map<string, Recomendacion[]>;
+  recosAbiertas: Set<string>;
+  marcarRecomendacion: (id: string, status: 'seguida' | 'descartada', enviado?: string) => Promise<void>;
+  pedirConsejo: (marca: string) => Promise<void>;
+  /** Las marcas de la pill de un foco: tarjetas + recomendaciones. */
+  marcasDePill: (foco: Exclude<FocoAsesor, null>) => { severity: string; status: string }[];
 }
 
 /** Lo que se abre en la pestaña Acciones: una publicación, una cuenta, o todo. */
@@ -86,6 +94,14 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
   const [listaTarjetas, setListaTarjetas] = useState<Tarjeta[]>([]);
   const [comentariosPorId, setComentariosPorId] = useState<Map<number, Comentario>>(new Map());
   const [tickTarjetas, setTickTarjetas] = useState(0);
+  const [listaRecos, setListaRecos] = useState<Recomendacion[]>([]);
+  // Una recomendación no tiene «vista» en la base: lo que este operador ya abrió se recuerda en su navegador.
+  const [recosAbiertas, setRecosAbiertas] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('sociallab.recos_abiertas') ?? '[]')); } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('sociallab.recos_abiertas', JSON.stringify([...recosAbiertas].slice(-500))); } catch { /* sin almacenamiento */ }
+  }, [recosAbiertas]);
   const contadoresPrevios = useRef<Map<string, number> | null>(null);
   const pendientesVistos = useRef<Set<number> | null>(null);
 
@@ -171,7 +187,7 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     if (tick === 0) return;
     let activo = true;
     leerTarjetas(token, { marca: marca || undefined })
-      .then((r) => { if (activo) setListaTarjetas(r.tarjetas); })
+      .then((r) => { if (activo) { setListaTarjetas(r.tarjetas); setListaRecos(r.recomendaciones ?? []); } })
       .catch((e) => console.error('[pulso] tarjetas del asesor:', e instanceof Error ? e.message : e));
     return () => { activo = false; };
   }, [token, marca, tick, tickTarjetas]);
@@ -180,25 +196,43 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
   const grupos = useMemo(
     () => agruparTarjetas(listaTarjetas, (id) => comentariosPorId.get(id)?.scheduled_post_id),
     [listaTarjetas, comentariosPorId]);
+  const gruposRecos = useMemo(
+    () => agruparTarjetas(listaRecos, (id) => comentariosPorId.get(id)?.scheduled_post_id),
+    [listaRecos, comentariosPorId]);
 
   const actualizarLocal = (t: Tarjeta) => setListaTarjetas((xs) => xs.map((x) => (x.id === t.id ? { ...x, ...t, accion: x.accion } : x)));
 
   // Abrir: las tarjetas NUEVAS de ese foco pasan a «vista» (para todos los operadores) y se va a Acciones.
   const abrirAsesor = useCallback((foco: FocoAsesor) => {
     const delFoco = !foco ? [] : 'post' in foco ? grupos.porPost.get(foco.post) ?? [] : grupos.porCuenta.get(foco.cuenta) ?? [];
+    const recosDelFoco = !foco ? [] : 'post' in foco ? gruposRecos.porPost.get(foco.post) ?? [] : gruposRecos.porCuenta.get(foco.cuenta) ?? [];
+    if (recosDelFoco.length) setRecosAbiertas((s) => new Set([...s, ...recosDelFoco.map((r) => r.id)]));
     for (const t of delFoco.filter((x) => x.status === 'nueva')) {
       setListaTarjetas((xs) => xs.map((x) => (x.id === t.id ? { ...x, status: 'vista' } : x)));
       cambiarTarjeta(token, t.id, 'vista').then((r) => actualizarLocal(r.tarjeta))
         .catch((e) => console.error('[pulso] marcar vista:', e instanceof Error ? e.message : e));
     }
     onAsesor(foco);
-  }, [grupos, token, onAsesor]);
+  }, [grupos, gruposRecos, token, onAsesor]);
 
   const marcarTarjeta = useCallback(async (id: string, status: 'seguida' | 'descartada') => {
     const r = await cambiarTarjeta(token, id, status);
     if (status === 'descartada') setListaTarjetas((xs) => xs.filter((x) => x.id !== id));
     else actualizarLocal(r.tarjeta);
   }, [token]);
+
+  // Sólo se muestran las «nueva»: seguida o descartada, sale de la lista.
+  const marcarRecomendacion = useCallback(async (id: string, status: 'seguida' | 'descartada', enviado?: string) => {
+    await cambiarRecomendacion(token, id, status, enviado);
+    setListaRecos((xs) => xs.filter((x) => x.id !== id));
+  }, [token]);
+  const pedirConsejo = useCallback(async (m: string) => { await pedirConsejoApi(token, m); }, [token]);
+
+  const marcasDePill = useCallback((foco: Exclude<FocoAsesor, null>) => {
+    const ts = 'post' in foco ? grupos.porPost.get(foco.post) ?? [] : grupos.porCuenta.get(foco.cuenta) ?? [];
+    const rs = 'post' in foco ? gruposRecos.porPost.get(foco.post) ?? [] : gruposRecos.porCuenta.get(foco.cuenta) ?? [];
+    return [...ts.map((t) => ({ severity: t.severity, status: t.status })), ...rs.map((r) => marcaDePill(r.id, recosAbiertas))];
+  }, [grupos, gruposRecos, recosAbiertas]);
 
   // El título de la pestaña del navegador lleva la cuenta: se ve aunque el operador esté en otra.
   useEffect(() => {
@@ -214,11 +248,15 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     nuevosPorPost: new Set(nuevos.flatMap((n) => (n.scheduled_post_id ? [n.scheduled_post_id] : []))),
     atender: (id) => { setNuevos((xs) => xs.filter((x) => x.scheduled_post_id !== id)); onAtender(id); },
     descartar: () => setNuevos([]),
-    tarjetas: listaTarjetas, tarjetasNuevas: listaTarjetas.filter((t) => t.status === 'nueva').length,
+    tarjetas: listaTarjetas,
+    tarjetasNuevas: listaTarjetas.filter((t) => t.status === 'nueva').length + listaRecos.filter((r) => !recosAbiertas.has(r.id)).length,
+    recomendaciones: listaRecos, recosPorPost: gruposRecos.porPost, recosPorCuenta: gruposRecos.porCuenta, recosAbiertas,
+    marcarRecomendacion, pedirConsejo, marcasDePill,
     tarjetasPorPost: grupos.porPost, tarjetasPorCuenta: grupos.porCuenta, comentariosPorId,
     abrirAsesor, marcarTarjeta, recargarTarjetas: () => setTickTarjetas((n) => n + 1),
   }), [vivo, errorVivo, cargandoVivo, leidoVivoEn, pendientesPorPost, pendientes, nuevos, onAtender,
-    listaTarjetas, grupos, comentariosPorId, abrirAsesor, marcarTarjeta]);
+    listaTarjetas, grupos, comentariosPorId, abrirAsesor, marcarTarjeta,
+    listaRecos, gruposRecos, recosAbiertas, marcarRecomendacion, pedirConsejo, marcasDePill]);
 
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>;
 }
@@ -272,9 +310,9 @@ export function AvisoComentarios({ marcas }: { marcas: Marca[] }) {
 export function PillsDePost({ id, platformPostId, metricas, sinMedir }: {
   id: string; platformPostId: string | null; metricas: MetricaMedida[]; sinMedir?: string;
 }) {
-  const { vivoPorId, pendientesPorPost, nuevosPorPost, atender, tarjetasPorPost, abrirAsesor } = usePulso();
+  const { vivoPorId, pendientesPorPost, nuevosPorPost, atender, marcasDePill, abrirAsesor } = usePulso();
   const enVivo = platformPostId ? vivoPorId.get(platformPostId)?.contadores : undefined;
-  const consejos = tarjetasPorPost.get(id) ?? [];
+  const consejos = marcasDePill({ post: id });
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {consejos.length > 0 && <PillAsesor tarjetas={consejos} onClick={() => abrirAsesor({ post: id })} />}
@@ -286,8 +324,8 @@ export function PillsDePost({ id, platformPostId, metricas, sinMedir }: {
 
 /** La pill del asesor de una cuenta (Estadísticas): los consejos que no son de una publicación. */
 export function PillAsesorDeCuenta({ brand_id, platform }: { brand_id: string; platform: string }) {
-  const { tarjetasPorCuenta, abrirAsesor } = usePulso();
+  const { marcasDePill, abrirAsesor } = usePulso();
   const k = claveDeCuenta(brand_id, platform);
-  const ts = tarjetasPorCuenta.get(k) ?? [];
+  const ts = marcasDePill({ cuenta: k });
   return ts.length ? <PillAsesor tarjetas={ts} onClick={() => abrirAsesor({ cuenta: k })} /> : null;
 }

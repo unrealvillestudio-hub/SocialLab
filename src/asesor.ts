@@ -6,7 +6,7 @@
  */
 
 export interface TarjetaMin {
-  id: string; brand_id: string; platform: string; severity: string; status: string;
+  id: string; brand_id: string; platform: string | null;
   scheduled_post_id: string | null; post_comment_id: number | null;
 }
 
@@ -29,9 +29,18 @@ export function agruparTarjetas<T extends TarjetaMin>(
     const post = t.scheduled_post_id ?? (t.post_comment_id != null ? postDeComentario(t.post_comment_id) ?? null : null);
     if (post) porPost.set(post, [...(porPost.get(post) ?? []), t]);
     else {
-      const k = claveDeCuenta(t.brand_id, t.platform);
+      const k = claveDeCuenta(t.brand_id, t.platform ?? '');
       porCuenta.set(k, [...(porCuenta.get(k) ?? []), t]);
     }
   }
   return { porPost, porCuenta };
+}
+
+/**
+ * Una recomendación no tiene severidad ni estado «vista» en la base: en la pill cuenta como
+ * «oportunidad», y como abierta cuando ESTE operador ya la abrió (se recuerda en su navegador).
+ */
+export const SEVERIDAD_RECOMENDACION = 'oportunidad';
+export function marcaDePill(recoId: string, abiertas: ReadonlySet<string>): { severity: string; status: string } {
+  return { severity: SEVERIDAD_RECOMENDACION, status: abiertas.has(recoId) ? 'vista' : 'nueva' };
 }
