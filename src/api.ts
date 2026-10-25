@@ -85,3 +85,35 @@ export interface RespEstadisticas {
   estadisticas: Estadistica[];
   cuenta: { estado: string; motivo: string };
 }
+
+// ── Comentarios (`/api/comments`, SocialLab #14) ──────────────────────────────
+
+export type EstadoComentario = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'de_la_marca';
+export interface RespuestaComentario {
+  id: string; post_comment_id: number; status: 'requested' | 'sent' | 'verified' | 'failed';
+  message: string | null; requested_by: string | null; requested_at: string;
+  platform_reply_id: string | null; sent_at: string | null; verified_at: string | null; error: string | null;
+}
+export interface Comentario {
+  id: number; platform: string; platform_comment_id: string; scheduled_post_id: string | null; brand_id: string;
+  platform_post_id: string; parent_comment_id: string | null; author_name: string | null; from_brand: boolean;
+  text: string | null; like_count: number | null; commented_at: string; first_seen_at: string | null;
+  estado: EstadoComentario; respuestas: RespuestaComentario[];
+}
+export interface RespComentarios {
+  ventana: { desde: string; hasta: string }; total: number; pendientes: number; truncado: boolean; comentarios: Comentario[];
+}
+
+export async function comentarios(token: string, params: Record<string, string | undefined> = {}): Promise<RespComentarios> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  return leer<RespComentarios>(await fetch(`/api/comments?${qs}`, { headers: { Authorization: `Bearer ${token}` } }));
+}
+
+export async function responderComentario(token: string, postCommentId: number, message: string): Promise<{ respuesta: RespuestaComentario }> {
+  return leer(await fetch('/api/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ post_comment_id: postCommentId, message }),
+  }));
+}
