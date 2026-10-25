@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
-  lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
+  lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta, canalesPorMarca, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
 import { combinarMetricas, aumentosDeComentarios, cuentasActivas, planDeLectura, fusionarLectura } from '../src/pulso.ts';
 
@@ -294,6 +294,18 @@ test('en vivo por actividad: una lectura parcial sólo sustituye las cuentas le�
   const f = fusionarLectura(previa, nueva);
   assert.deepEqual(f.publicaciones.map((p) => [p.id, p.c]), [['a1', 2], ['b1', 5]]);
   assert.equal(f.lecturas.length, 2);
+});
+
+test('filtro de plataforma: los canales activos de cada marca, sin los inactivos', () => {
+  const m = canalesPorMarca([
+    { brand_id: 'm', platform_key: 'meta_ig', publication_path: 'drained', provider: 'INSTAGRAM' },
+    { brand_id: 'm', platform_key: 'linkedin', publication_path: 'manual', provider: 'LINKEDIN' },
+    { brand_id: 'm', platform_key: 'email', publication_path: 'inactive', provider: 'EMAIL' },
+  ]);
+  assert.deepEqual(m.get('m'), [
+    { platform_key: 'meta_ig', platform: 'INSTAGRAM', via: 'carril' },
+    { platform_key: 'linkedin', platform: 'LINKEDIN', via: 'manual' },
+  ]);
 });
 
 // ── 7 · Métricas de la cuenta ─────────────────────────────────────────────────

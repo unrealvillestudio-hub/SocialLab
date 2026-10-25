@@ -41,8 +41,8 @@ function espera(desde: string, ahora = Date.now()): string {
   return `${Math.round(min / 1440)} d`;
 }
 
-export default function Comentarios({ token, marca, marcas, post = null, onQuitarFiltro }: {
-  token: string; marca: string; marcas: Marca[];
+export default function Comentarios({ token, marca, plataforma = '', marcas, post = null, onQuitarFiltro }: {
+  token: string; marca: string; plataforma?: string; marcas: Marca[];
   /** Abierta desde la pill de comentarios de una publicación: sólo los de ese post. */
   post?: string | null; onQuitarFiltro?: () => void;
 }) {
@@ -77,9 +77,13 @@ export default function Comentarios({ token, marca, marcas, post = null, onQuita
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
   const visibles = useMemo(
-    () => (data?.comentarios ?? []).filter((c) => (verDeLaMarca || c.estado !== 'de_la_marca') && (!post || c.scheduled_post_id === post)),
-    [data, verDeLaMarca, post]);
+    () => (data?.comentarios ?? []).filter((c) => (verDeLaMarca || c.estado !== 'de_la_marca') && (!post || c.scheduled_post_id === post) && (!plataforma || c.platform === plataforma)),
+    [data, verDeLaMarca, post, plataforma]);
   const delPost = post ? posts.get(post) : undefined;
+  // Con un filtro (plataforma o post), los contadores son los de lo filtrado; sin filtro, los del endpoint.
+  const filtrado = !!(post || plataforma);
+  const pendientes = filtrado ? visibles.filter((c) => c.estado === 'sin_responder' || c.estado === 'fallida').length : data?.pendientes ?? 0;
+  const total = filtrado ? visibles.length : data?.total ?? 0;
 
   return (
     <div className="space-y-4">
@@ -111,9 +115,9 @@ export default function Comentarios({ token, marca, marcas, post = null, onQuita
         <>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 flex items-center gap-3 text-xs text-zinc-400">
             <MessageCircle className="w-4 h-4 text-accent" />
-            <span><b className={cn('text-base', data.pendientes ? 'text-amber-300' : 'text-zinc-100')}>{data.pendientes}</b> esperan respuesta</span>
+            <span><b className={cn('text-base', pendientes ? 'text-amber-300' : 'text-zinc-100')}>{pendientes}</b> esperan respuesta</span>
             <span className="text-zinc-600">·</span>
-            <span>{data.total} comentarios en {dias} días</span>
+            <span>{total} comentarios en {dias} días</span>
           </div>
           {data.truncado && <Aviso tono="error">Hay más comentarios de los que se muestran: acota el rango.</Aviso>}
           {visibles.length === 0 && <Aviso>No hay comentarios en esta ventana.</Aviso>}

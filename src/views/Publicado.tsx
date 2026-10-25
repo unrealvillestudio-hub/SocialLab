@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, RefreshCw, Radio } from 'lucide-react';
+import { ExternalLink, LayoutGrid, RefreshCw, Radio, Square } from 'lucide-react';
 import { ops, type Marca, type RespPublicado, type EnVivo, type Publicada } from '../api';
 import { Aviso, Cargando, Chip, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
 import { PillsDePost, usePulso } from '../ui/Pulso';
@@ -16,10 +16,12 @@ const isoDia = (t: number) => new Date(t).toISOString().slice(0, 10);
  * enlace salen de ahí cuando la plataforma la devuelve. Lo que la plataforma muestra y el registro no
  * tiene se lista aparte, «fuera del carril».
  */
-export default function Publicado({ token, marca, marcas }: { token: string; marca: string; marcas: Marca[] }) {
+export default function Publicado({ token, marca, plataforma, marcas }: { token: string; marca: string; plataforma: string; marcas: Marca[] }) {
   const [desde, setDesde] = useState(isoDia(Date.now() - 7 * DIA));
   const [hasta, setHasta] = useState(isoDia(Date.now() + DIA));
-  const [plataforma, setPlataforma] = useState('');
+  // En el teléfono: 2 columnas (tarjeta compacta) o 1 (tarjeta completa). Se recuerda en este navegador.
+  const [columnas, setColumnas] = useState<1 | 2>(() => { try { return localStorage.getItem('sociallab.columnas') === '1' ? 1 : 2; } catch { return 2; } });
+  useEffect(() => { try { localStorage.setItem('sociallab.columnas', String(columnas)); } catch { /* sin almacenamiento */ } }, [columnas]);
   const [formato, setFormato] = useState('');
   const [reg, setReg] = useState<RespPublicado | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +60,6 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
       && (!v.publicado_en || (Date.parse(v.publicado_en) >= d && Date.parse(v.publicado_en) < h)));
   }, [vivo, plataforma, desde, hasta]);
 
-  const plataformas = useMemo(() => [...new Set([...(reg?.conteos ?? []).map((c) => c.platform), ...marcas.flatMap((m) => m.plataformas_en_vivo)])].sort(), [reg, marcas]);
   const formatos = useMemo(() => [...new Set((reg?.conteos ?? []).map((c) => c.formato))].sort(), [reg]);
 
   return (
@@ -66,18 +67,21 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-end gap-3">
         <Campo etiqueta="Desde"><input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="entrada" /></Campo>
         <Campo etiqueta="Hasta (excluido)"><input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="entrada" /></Campo>
-        <Campo etiqueta="Plataforma">
-          <select value={plataforma} onChange={(e) => setPlataforma(e.target.value)} className="entrada">
-            <option value="">Todas</option>
-            {plataformas.map((p) => <option key={p} value={p}>{etiquetaPlataforma(p)}</option>)}
-          </select>
-        </Campo>
         <Campo etiqueta="Formato">
           <select value={formato} onChange={(e) => setFormato(e.target.value)} className="entrada">
             <option value="">Todos</option>
             {[...new Set([...formatos, formato].filter(Boolean))].map((f) => <option key={f} value={f}>{etiquetaFormato(f)}</option>)}
           </select>
         </Campo>
+        <div className="sm:hidden flex items-end gap-1" role="group" aria-label="Columnas">
+          {([2, 1] as const).map((n) => (
+            <button key={n} onClick={() => setColumnas(n)} aria-pressed={columnas === n} title={n === 2 ? 'Grid de 2 columnas' : '1 columna'}
+              className={cn('flex-1 flex items-center justify-center py-2.5 rounded-lg border',
+                columnas === n ? 'bg-accent/10 text-accent border-accent/50' : 'border-zinc-800 text-zinc-500')}>
+              {n === 2 ? <LayoutGrid className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+            </button>
+          ))}
+        </div>
         <button onClick={() => { setRecarga((n) => n + 1); recargarVivo(); }} className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
           <RefreshCw className="w-3.5 h-3.5" /> Actualizar
         </button>
@@ -101,11 +105,11 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
             <Radio className={cn('w-3.5 h-3.5', cargandoVivo ? 'animate-pulse text-amber-400' : 'text-emerald-400')} />
             {cargandoVivo ? 'Leyendo las plataformas…'
-              : vivo ? `En vivo: ${vivo.publicaciones.length} publicaciones recientes leídas de las plataformas (hasta ${vivo.limite} por cuenta). Me gusta y comentarios: cada minuto las cuentas que publicaron en los últimos 7 días, las demás cada 10 min (con la pestaña visible). Las demás métricas, al ritmo de SignalLab.` : 'Sin lectura en vivo.'}
+              : vivo ? <span>En vivo: {vivo.publicaciones.length} publicaciones recientes.<span className="hidden sm:inline"> Hasta {vivo.limite} por cuenta. Me gusta y comentarios: cada minuto las cuentas que publicaron en los últimos 7 días, las demás cada 10 min (con la pestaña visible). Las demás métricas, al ritmo de SignalLab.</span></span> : 'Sin lectura en vivo.'}
             {leidoEn && <span className="sm:ml-auto text-zinc-600">métricas releídas {new Date(leidoEn).toLocaleTimeString('es')} · cada 60 s</span>}
           </div>
-          <Rejilla>
-            {reg.publicaciones.map((p) => <Tarjeta key={`${p.via ?? 'carril'}-${p.id}`} p={p} vivo={p.platform_post_id ? porId.get(p.platform_post_id) : undefined}
+          <Rejilla columnas={columnas}>
+            {reg.publicaciones.map((p) => <Tarjeta compacta={columnas === 2} key={`${p.via ?? 'carril'}-${p.id}`} p={p} vivo={p.platform_post_id ? porId.get(p.platform_post_id) : undefined}
               leidoEnVivo={!!vivo && vivo.lecturas.some((l) => l.brand_id === p.brand_id && l.platform === p.platform && !l.error)}
               nombre={nombre(p.brand_id)} huso={huso(p.brand_id)} />)}
           </Rejilla>
@@ -117,7 +121,7 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
         <section className="space-y-3">
           <h3 className="text-sm font-semibold text-zinc-300">En la plataforma, fuera del carril <span className="text-zinc-500 font-normal">({fueraDelCarril.length})</span></h3>
           <p className="text-[11px] text-zinc-500">Publicadas en la cuenta de la marca sin fila en el registro: manuales o de otra vía. No entran en los conteos.</p>
-          <Rejilla>{fueraDelCarril.map((v) => <TarjetaVivo key={v.platform_post_id} v={v} nombre={nombre(v.brand_id)} huso={huso(v.brand_id)} />)}</Rejilla>
+          <Rejilla columnas={columnas}>{fueraDelCarril.map((v) => <TarjetaVivo key={v.platform_post_id} v={v} nombre={nombre(v.brand_id)} huso={huso(v.brand_id)} />)}</Rejilla>
         </section>
       )}
     </div>
@@ -128,8 +132,8 @@ const Campo = ({ etiqueta, children }: { etiqueta: string; children: React.React
   <label className="flex flex-col gap-1 min-w-0 text-[10px] uppercase tracking-wider text-zinc-500">{etiqueta}{children}</label>
 );
 
-const Rejilla = ({ children }: { children: React.ReactNode }) => (
-  <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{children}</div>
+const Rejilla = ({ children, columnas = 1 }: { children: React.ReactNode; columnas?: 1 | 2 }) => (
+  <div className={cn('grid sm:gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4', columnas === 2 ? 'grid-cols-2 gap-2' : 'grid-cols-1 gap-3')}>{children}</div>
 );
 
 function Conteos({ reg, nombre }: { reg: RespPublicado; nombre: (b: string) => string }) {
@@ -153,17 +157,21 @@ function Imagen({ src }: { src: string | null }) {
   return <img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setRota(true)} className="aspect-square w-full object-cover bg-zinc-900" />;
 }
 
-function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso }: { p: Publicada; vivo?: EnVivo; leidoEnVivo: boolean; nombre: string; huso: string | null }) {
+/** `compacta`: en el grid de 2 columnas del teléfono sólo queda lo esencial (imagen, marca, plataforma, fecha y pills). */
+function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso, compacta = false }: {
+  p: Publicada; vivo?: EnVivo; leidoEnVivo: boolean; nombre: string; huso: string | null; compacta?: boolean;
+}) {
+  const oculta = compacta ? 'max-sm:hidden' : '';
   const enlace = vivo?.permalink ?? p.enlace ?? null;
   const imagen = vivo?.imagen ?? p.image_url ?? p.media_urls?.[0] ?? null;
   return (
     <article className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden flex flex-col">
       <Imagen src={imagen} />
-      <div className="p-3 space-y-2 flex-1 flex flex-col">
+      <div className={cn('space-y-2 flex-1 flex flex-col', compacta ? 'p-2 sm:p-3' : 'p-3')}>
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip className="text-zinc-200">{nombre}</Chip>
           <Chip>{etiquetaPlataforma(p.platform)}</Chip>
-          <Chip>{etiquetaFormato(p.formato)}</Chip>
+          <Chip className={oculta}>{etiquetaFormato(p.formato)}</Chip>
           {p.via === 'manual' ? <Chip className="bg-sky-500/10 text-sky-300">manual</Chip>
             : p.via === 'externa' ? <Chip className="bg-violet-500/10 text-violet-300">externa</Chip>
             : p.via === 'detectada' ? <Chip className="bg-orange-500/10 text-orange-300" >detectada fuera del sistema</Chip>
@@ -172,11 +180,11 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso }: { p: Publicada; vivo?: 
             : leidoEnVivo ? <Chip className="bg-amber-500/10 text-amber-300" >no está en la lectura reciente</Chip> : null}
         </div>
         <div className="text-[11px] text-zinc-500">{fechaHora(p.published_at, huso)}</div>
-        <p className="texto-editorial text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1">{vivo?.texto ?? p.copy_text ?? ''}</p>
+        <p className={cn('texto-editorial text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1', oculta)}>{vivo?.texto ?? p.copy_text ?? ''}</p>
         <PillsDePost id={p.id} platformPostId={p.platform_post_id} metricas={p.metricas}
           sinMedir={p.via === 'manual' || p.via === 'externa' ? `sin lector de métricas (publicación ${p.via})` : 'sin medir'} />
         <div className="flex items-center justify-between text-[10px] font-mono text-zinc-600">
-          <span title="piece_id">{p.piece_id ?? 'sin piece_id'}</span>
+          <span title="piece_id" className={cn('truncate', oculta)}>{p.piece_id ?? 'sin piece_id'}</span>
           {enlace && <a href={enlace} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline">Ver <ExternalLink className="w-3 h-3" /></a>}
         </div>
       </div>

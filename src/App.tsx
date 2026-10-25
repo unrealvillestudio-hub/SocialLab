@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle } from 'lucide-react';
-import { entrar, ops, ErrorApi, type Catalogo, type Sesion } from './api';
-import { Aviso, Cargando, cn } from './ui/components';
+import { entrar, ops, plataformasDe, ErrorApi, type Catalogo, type Sesion } from './api';
+import { Aviso, Cargando, cn, etiquetaPlataforma } from './ui/components';
 import Publicado from './views/Publicado';
 import Calendario from './views/Calendario';
 import Estadisticas from './views/Estadisticas';
@@ -64,6 +64,11 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
   const [catalogo, setCatalogo] = useState<Catalogo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [marca, setMarca] = useState('');
+  /** Filtro común a todas las pestañas: '' = todas las plataformas. */
+  const [plataforma, setPlataforma] = useState('');
+  const plataformas = catalogo ? plataformasDe(catalogo.marcas, marca) : [];
+  // Si la marca elegida no tiene la plataforma filtrada, el filtro vuelve a «todas»: nunca una pantalla vacía sin motivo.
+  useEffect(() => { if (plataforma && catalogo && !plataformasDe(catalogo.marcas, marca).includes(plataforma)) setPlataforma(''); }, [marca, catalogo]);
   /** La publicación cuya bandeja se abrió desde su pill o desde el aviso; `null` = todas. */
   const [postComentarios, setPostComentarios] = useState<string | null>(null);
   const atender = useCallback((id: string | null) => { setPostComentarios(id); setPestana('comentarios'); }, []);
@@ -100,10 +105,16 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
                   </button>
                 ))}
               </nav>
-              <select value={marca} onChange={(e) => setMarca(e.target.value)} className="entrada w-full md:w-auto">
-                {catalogo.marcas.length > 1 && <option value="">Todas mis marcas ({catalogo.marcas.length})</option>}
-                {catalogo.marcas.map((m) => <option key={m.brand_id} value={m.brand_id}>{m.nombre}</option>)}
-              </select>
+              <div className="grid grid-cols-2 gap-2 w-full md:w-auto md:flex">
+                <select value={marca} onChange={(e) => setMarca(e.target.value)} className="entrada min-w-0" aria-label="Marca">
+                  {catalogo.marcas.length > 1 && <option value="">Todas mis marcas ({catalogo.marcas.length})</option>}
+                  {catalogo.marcas.map((m) => <option key={m.brand_id} value={m.brand_id}>{m.nombre}</option>)}
+                </select>
+                <select value={plataforma} onChange={(e) => setPlataforma(e.target.value)} className="entrada min-w-0" aria-label="Plataforma">
+                  <option value="">Plataformas: todas</option>
+                  {plataformas.map((p) => <option key={p} value={p}>{etiquetaPlataforma(p)}</option>)}
+                </select>
+              </div>
             </div>
             <h2 className="md:hidden titulo text-2xl text-zinc-100">{PESTANAS.find((p) => p.id === pestana)?.etiqueta}</h2>
             <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-zinc-800 bg-uv-bg/95 backdrop-blur-md grid grid-cols-5"
@@ -118,12 +129,12 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
             </nav>
             {catalogo.marcas.length === 0 && <Aviso>No hay marcas con cuenta conectada en tu alcance.</Aviso>}
             <AvisoComentarios marcas={catalogo.marcas} />
-            {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
-            {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
-            {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} marcas={catalogo.marcas}
+            {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
+            {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
+            {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas}
               post={postComentarios} onQuitarFiltro={() => setPostComentarios(null)} />}
-            {pestana === 'estadisticas' && <Estadisticas token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
-            {pestana === 'calendario' && <Calendario token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
+            {pestana === 'estadisticas' && <Estadisticas token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
+            {pestana === 'calendario' && <Calendario token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
           </ProveedorPulso>
         )}
       </main>

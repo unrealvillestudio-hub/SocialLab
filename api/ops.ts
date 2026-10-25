@@ -18,7 +18,7 @@
  */
 import {
   ventana, contar, formatoDe, ultimasMetricas, marcasConsultadas, lectorDe, normalizarRespuesta,
-  LECTORES_EN_VIVO, TODAS, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta,
+  LECTORES_EN_VIVO, TODAS, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta, canalesPorMarca,
   type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo, type Canal, type Via, type FilaCuenta, type MetricaCatalogo,
 } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, esTablaInexistente, mcpLeer, LecturaFallida } from './_opsShared.js';
@@ -72,12 +72,17 @@ async function catalogo(alcance: Alcance) {
       `brands?select=id,display_name,publish_timezone&id=${enLista(ids)}`)
     : [];
   const porId = new Map(marcas.map((m) => [m.id, m]));
+  const canales = ids.length
+    ? canalesPorMarca(await sbGet<Canal>(
+      `brand_publish_channels?select=brand_id,platform_key,publication_path,provider:config->>provider_platform&brand_id=${enLista(ids)}`, 'intel'))
+    : new Map();
   return {
     marcas: ids.map((id) => ({
       brand_id: id,
       nombre: porId.get(id)?.display_name ?? id,
       huso: porId.get(id)?.publish_timezone ?? null,
       plataformas_en_vivo: plataformasEnVivo(cuentas.find((c) => c.brand_id === id)),
+      canales: canales.get(id) ?? [],
     })).sort((a, b) => a.nombre.localeCompare(b.nombre)),
     alcance_total: alcance === TODAS,
   };

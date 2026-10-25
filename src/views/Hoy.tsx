@@ -8,7 +8,7 @@ import { PillsDePost } from '../ui/Pulso';
  * formato y edad). Mientras no haya instantáneas dice «sin medir»; mientras no haya comparación,
  * lista sin ordenar y lo dice. Nunca inventa un orden ni un cero.
  */
-export default function Hoy({ token, marca, marcas }: { token: string; marca: string; marcas: Marca[] }) {
+export default function Hoy({ token, marca, plataforma, marcas }: { token: string; marca: string; plataforma: string; marcas: Marca[] }) {
   const [data, setData] = useState<RespAhora | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,6 +26,8 @@ export default function Hoy({ token, marca, marcas }: { token: string; marca: st
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
 
+  const lista = (data?.publicaciones ?? []).filter((p) => !plataforma || p.platform === plataforma);
+
   if (error) return <Aviso tono="error">No se pudo leer «happening now»: {error}</Aviso>;
   if (!data) return <Cargando />;
   return (
@@ -36,9 +38,9 @@ export default function Hoy({ token, marca, marcas }: { token: string; marca: st
           <b className="text-amber-300">{data.estado === 'sin_medir' ? 'Sin medir' : 'Sin ordenar'}</b> — {data.motivo}.
         </div>
       </div>
-      {data.publicaciones.length === 0 && <Aviso>No hay publicaciones en la ventana.</Aviso>}
+      {lista.length === 0 && <Aviso>No hay publicaciones en la ventana{plataforma ? ' para esta plataforma' : ''}.</Aviso>}
       <ul className="space-y-2">
-        {data.publicaciones.map((p) => (
+        {lista.map((p) => (
           <li key={p.id} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 flex flex-wrap items-center gap-2 text-[11px]">
             <span className="text-zinc-500 basis-full sm:basis-auto sm:w-28">{fechaHora(p.published_at, huso(p.brand_id))}</span>
             <Chip className="text-zinc-200">{nombre(p.brand_id)}</Chip>

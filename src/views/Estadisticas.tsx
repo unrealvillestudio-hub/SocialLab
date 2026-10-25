@@ -15,7 +15,7 @@ const DIA = 86_400_000;
 const etiquetaMetrica = (m: string) => m.replace(/_/g, ' ');
 const numero = (n: number) => (Number.isInteger(n) ? n : Math.round(n * 10) / 10).toLocaleString('en-US');
 
-export default function Estadisticas({ token, marca, marcas }: { token: string; marca: string; marcas: Marca[] }) {
+export default function Estadisticas({ token, marca, plataforma, marcas }: { token: string; marca: string; plataforma: string; marcas: Marca[] }) {
   const [dias, setDias] = useState<(typeof RANGOS)[number]>(30);
   const [data, setData] = useState<RespEstadisticas | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,8 +43,8 @@ export default function Estadisticas({ token, marca, marcas }: { token: string; 
       const k = `${c.brand_id}|${c.platform}`;
       m.set(k, { ...(m.get(k) ?? { k }), c });
     }
-    return [...m.values()].sort((a, b) => a.k.localeCompare(b.k));
-  }, [data]);
+    return [...m.values()].filter((x) => !plataforma || x.k.endsWith(`|${plataforma}`)).sort((a, b) => a.k.localeCompare(b.k));
+  }, [data, plataforma]);
 
   return (
     <div className="space-y-5">
