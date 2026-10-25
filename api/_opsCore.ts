@@ -267,6 +267,106 @@ export function estadisticas(filas: readonly FilaConMetricas[], topN = 6): Estad
   return out.sort((a, b) => a.brand_id.localeCompare(b.brand_id) || a.platform.localeCompare(b.platform));
 }
 
+// ── Métricas de la CUENTA (SignalLab, `content.account_metric_daily`) ─────────
+
+/** Una fila de `content.account_metric_daily` (formato largo, una por día, métrica y desglose). */
+export interface FilaCuenta {
+  brand_id: string; platform: string; metric_date: string; metric: string;
+  breakdown: string; breakdown_value: string; value: number | string | null; unavailable_reason: string | null;
+}
+/** Una fila del catálogo `intel.signal_account_metrics`: cómo se lee cada métrica y desde cuántos seguidores. */
+export interface MetricaCatalogo {
+  platform: string; metric: string; breakdown: string; read_as: string; min_followers: number | null; notes: string | null;
+}
+
+/** La métrica que da el total de seguidores. Vocabulario de la plataforma, igual en IG y FB. */
+export const METRICA_SEGUIDORES = 'followers_count';
+/** El prefijo con el que SignalLab marca una métrica que la plataforma aún no da por falta de seguidores. */
+export const MOTIVO_UMBRAL = 'requiere_';
+
+export interface PuntoSerie { fecha: string; value: number | null; motivo: string | null; provisional: boolean }
+export interface ResumenCuenta {
+  brand_id: string; platform: string;
+  seguidores: { value: number; fecha: string } | null;
+  /** Series diarias (`read_as = time_series`): un punto por día; los últimos días pueden cambiar. */
+  series: { metric: string; nota: string | null; puntos: PuntoSerie[] }[];
+  /** Totales del período: suma de los días con valor de cada métrica sin desglose. */
+  totales: { metric: string; total: number; dias: number; nota: string | null }[];
+  /** Campos (`read_as = field`) distintos de los seguidores: su última lectura. */
+  campos: { metric: string; value: number; fecha: string }[];
+  /** Desgloses sumados en el período, de mayor a menor. */
+  desgloses: { metric: string; breakdown: string; valores: { valor: string; total: number }[] }[];
+  /** Lo que la plataforma todavía no da: con el umbral del catálogo, para convertirlo en meta. */
+  bloqueadas: { metric: string; breakdown: string; min_followers: number | null; motivo: string; nota: string | null }[];
+  /** Métricas leídas sin ningún valor y sin umbral: «sin datos», nunca cero. */
+  sinDatos: { metric: string; breakdown: string }[];
+}
+
+const claveCat = (platform: string, metric: string, breakdown: string) => `${platform}|${metric}|${breakdown}`;
+const numero = (v: unknown): number | null => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+
+/**
+ * Agrupa las filas de la cuenta por marca y plataforma. `relecturaDias` sale de la configuración de
+ * SignalLab (`account_series_days`): una serie se relee esos días, así que sus puntos son provisionales.
+ * Nada que no tenga valor se convierte en cero: queda como bloqueado (con su umbral) o «sin datos».
+ */
+export function resumenCuenta(
+  filas: readonly FilaCuenta[], catalogo: readonly MetricaCatalogo[], relecturaDias: number, hoy: string,
+): ResumenCuenta[] {
+  const cat = new Map(catalogo.map((c) => [claveCat(c.platform, c.metric, c.breakdown ?? ''), c]));
+  const limiteProvisional = new Date(Date.parse(`${hoy}T00:00:00Z`) - relecturaDias * 86_400_000).toISOString().slice(0, 10);
+  const grupos = new Map<string, FilaCuenta[]>();
+  for (const f of filas) {
+    const k = `${f.brand_id}|${f.platform}`;
+    grupos.set(k, [...(grupos.get(k) ?? []), f]);
+  }
+  const out: ResumenCuenta[] = [];
+  for (const [k, g] of grupos) {
+    const [brand_id, platform] = k.split('|');
+    const porMetrica = new Map<string, FilaCuenta[]>();
+    for (const f of g) {
+      const mk = `${f.metric}|${f.breakdown ?? ''}`;
+      porMetrica.set(mk, [...(porMetrica.get(mk) ?? []), f]);
+    }
+    const r: ResumenCuenta = { brand_id, platform, seguidores: null, series: [], totales: [], campos: [], desgloses: [], bloqueadas: [], sinDatos: [] };
+    for (const [mk, fs] of porMetrica) {
+      const [metric, breakdown] = mk.split('|');
+      const c = cat.get(claveCat(platform, metric, breakdown));
+      const conValor = fs.filter((f) => numero(f.value) !== null);
+      const ordenadas = [...fs].sort((a, b) => a.metric_date.localeCompare(b.metric_date));
+      const ultima = ordenadas[ordenadas.length - 1];
+      if (conValor.length === 0) {
+        const motivo = ultima.unavailable_reason ?? 'sin valor';
+        if (motivo.startsWith(MOTIVO_UMBRAL)) r.bloqueadas.push({ metric, breakdown, min_followers: c?.min_followers ?? null, motivo, nota: c?.notes ?? null });
+        else r.sinDatos.push({ metric, breakdown });
+        continue;
+      }
+      if (breakdown) {
+        const suma = new Map<string, number>();
+        for (const f of conValor) suma.set(f.breakdown_value, (suma.get(f.breakdown_value) ?? 0) + numero(f.value)!);
+        r.desgloses.push({ metric, breakdown, valores: [...suma].map(([valor, total]) => ({ valor, total })).sort((a, b) => b.total - a.total) });
+        continue;
+      }
+      const ultimaConValor = [...conValor].sort((a, b) => a.metric_date.localeCompare(b.metric_date)).pop()!;
+      if (metric === METRICA_SEGUIDORES) { r.seguidores = { value: numero(ultimaConValor.value)!, fecha: ultimaConValor.metric_date }; continue; }
+      if (c?.read_as === 'field') { r.campos.push({ metric, value: numero(ultimaConValor.value)!, fecha: ultimaConValor.metric_date }); continue; }
+      if (c?.read_as === 'time_series') {
+        r.series.push({ metric, nota: c.notes, puntos: ordenadas.map((f) => ({
+          fecha: f.metric_date, value: numero(f.value), motivo: f.unavailable_reason, provisional: f.metric_date >= limiteProvisional,
+        })) });
+        continue;
+      }
+      r.totales.push({ metric, total: conValor.reduce((s, f) => s + numero(f.value)!, 0), dias: conValor.length, nota: c?.notes ?? null });
+    }
+    const porNombre = (a: { metric: string; breakdown?: string }, b: { metric: string; breakdown?: string }) =>
+      a.metric.localeCompare(b.metric) || (a.breakdown ?? '').localeCompare(b.breakdown ?? '');
+    r.series.sort(porNombre); r.totales.sort((a, b) => b.total - a.total); r.campos.sort(porNombre);
+    r.desgloses.sort(porNombre); r.bloqueadas.sort(porNombre); r.sinDatos.sort(porNombre);
+    out.push(r);
+  }
+  return out.sort((a, b) => a.brand_id.localeCompare(b.brand_id) || a.platform.localeCompare(b.platform));
+}
+
 // ── Lectura en vivo, por plataforma ───────────────────────────────────────────
 
 /** Una publicación tal como la devuelve la plataforma, ya normalizada. */

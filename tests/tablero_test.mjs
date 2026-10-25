@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
-  lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
+  lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
 import { combinarMetricas, aumentosDeComentarios } from '../src/pulso.ts';
 
@@ -265,6 +265,42 @@ test('estadísticas: totales y medianas sólo de los posts medidos; el top orden
   assert.deepEqual(a.top, ['p2', 'p1'], 'el post sin medir no entra al top');
   assert.deepEqual(a.porFormato, [{ formato: 'SINGLE_IMAGE', publicaciones: 2 }, { formato: 'CAROUSEL', publicaciones: 1 }]);
   assert.deepEqual(a.porDia, [{ dia: '2026-10-20', publicaciones: 2 }, { dia: '2026-10-21', publicaciones: 1 }]);
+});
+
+// ── 7 · Métricas de la cuenta ─────────────────────────────────────────────────
+
+test('cuenta: seguidores, serie con días provisionales, totales, desgloses, bloqueadas y sin datos', () => {
+  const B = 'MarcaPrueba';
+  const f = (metric_date, metric, value, extra = {}) => ({ brand_id: B, platform: 'INSTAGRAM', metric_date, metric,
+    breakdown: '', breakdown_value: '', value, unavailable_reason: value === null ? 'sin_datos: la plataforma no devolvió valor' : null, ...extra });
+  const catalogo = [
+    { platform: 'INSTAGRAM', metric: 'followers_count', breakdown: '', read_as: 'field', min_followers: null, notes: null },
+    { platform: 'INSTAGRAM', metric: 'media_count', breakdown: '', read_as: 'field', min_followers: null, notes: null },
+    { platform: 'INSTAGRAM', metric: 'reach', breakdown: '', read_as: 'time_series', min_followers: null, notes: 'alcance' },
+    { platform: 'INSTAGRAM', metric: 'views', breakdown: '', read_as: 'total_value', min_followers: null, notes: null },
+    { platform: 'INSTAGRAM', metric: 'reach', breakdown: 'follow_type', read_as: 'total_value', min_followers: null, notes: null },
+    { platform: 'INSTAGRAM', metric: 'follower_demographics', breakdown: 'age', read_as: 'total_value', min_followers: 100, notes: 'demografía' },
+  ];
+  const [r, ...resto] = resumenCuenta([
+    f('2026-10-24', 'followers_count', 24), f('2026-10-25', 'followers_count', 25),
+    f('2026-10-25', 'media_count', '40'),
+    f('2026-10-10', 'reach', 7), f('2026-10-20', 'reach', 9),
+    f('2026-10-23', 'views', 100), f('2026-10-24', 'views', 50),
+    f('2026-10-24', 'reach', 3, { breakdown: 'follow_type', breakdown_value: 'FOLLOWER' }),
+    f('2026-10-24', 'reach', 8, { breakdown: 'follow_type', breakdown_value: 'NON_FOLLOWER' }),
+    f('2026-10-23', 'reach', 2, { breakdown: 'follow_type', breakdown_value: 'FOLLOWER' }),
+    f('2026-10-25', 'follower_demographics', null, { breakdown: 'age', unavailable_reason: 'requiere_100_seguidores (hoy 25)' }),
+    f('2026-10-24', 'saves', null),
+  ], catalogo, 7, '2026-10-25');
+  assert.equal(resto.length, 0);
+  assert.deepEqual(r.seguidores, { value: 25, fecha: '2026-10-25' }, 'los seguidores son la última lectura, no una suma');
+  assert.deepEqual(r.campos, [{ metric: 'media_count', value: 40, fecha: '2026-10-25' }]);
+  assert.deepEqual(r.series[0].puntos.map((p) => [p.fecha, p.provisional]), [['2026-10-10', false], ['2026-10-20', true]],
+    'los días dentro de la relectura son provisionales');
+  assert.deepEqual(r.totales, [{ metric: 'views', total: 150, dias: 2, nota: null }]);
+  assert.deepEqual(r.desgloses[0].valores, [{ valor: 'NON_FOLLOWER', total: 8 }, { valor: 'FOLLOWER', total: 5 }]);
+  assert.deepEqual(r.bloqueadas.map((b) => [b.metric, b.min_followers]), [['follower_demographics', 100]], 'el umbral sale del catálogo');
+  assert.deepEqual(r.sinDatos, [{ metric: 'saves', breakdown: '' }], 'sin valor y sin umbral es «sin datos», no cero');
 });
 
 if (fallos) { console.error(`\ntablero: ${fallos} fallo(s)`); process.exit(1); }

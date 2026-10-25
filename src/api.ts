@@ -85,7 +85,19 @@ export interface Estadistica {
 export interface RespEstadisticas {
   ventana: { desde: string; hasta: string }; truncado: boolean; metricas: 'medidas' | 'tabla_inexistente';
   estadisticas: Estadistica[];
-  cuenta: { estado: string; motivo: string };
+  cuenta: { estado: 'pendiente'; motivo: string } | { estado: 'medida'; relectura_dias: number; truncado: boolean; cuentas: ResumenCuenta[] };
+}
+
+/** Lo que SignalLab mide de la cuenta (ver `resumenCuenta` en `api/_opsCore.ts`). */
+export interface ResumenCuenta {
+  brand_id: string; platform: string;
+  seguidores: { value: number; fecha: string } | null;
+  series: { metric: string; nota: string | null; puntos: { fecha: string; value: number | null; motivo: string | null; provisional: boolean }[] }[];
+  totales: { metric: string; total: number; dias: number; nota: string | null }[];
+  campos: { metric: string; value: number; fecha: string }[];
+  desgloses: { metric: string; breakdown: string; valores: { valor: string; total: number }[] }[];
+  bloqueadas: { metric: string; breakdown: string; min_followers: number | null; motivo: string; nota: string | null }[];
+  sinDatos: { metric: string; breakdown: string }[];
 }
 
 // ── Comentarios (`/api/comments`, SocialLab #14) ──────────────────────────────
