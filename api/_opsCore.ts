@@ -179,6 +179,21 @@ export function viasPorCanal(canales: readonly Canal[]): Map<string, Via> {
   return m;
 }
 
+/**
+ * Los canales ACTIVOS de cada marca, con su plataforma y su vía: alimentan el filtro de plataforma del
+ * tablero. Un canal sin ruta conocida (p. ej. `inactive`) no publica y no se ofrece como filtro.
+ */
+export function canalesPorMarca(canales: readonly Canal[]): Map<string, { platform_key: string; platform: string; via: Via }[]> {
+  const m = new Map<string, { platform_key: string; platform: string; via: Via }[]>();
+  for (const c of canales) {
+    const via = VIA_POR_RUTA[String(c.publication_path ?? '')];
+    if (!via) continue;
+    m.set(c.brand_id, [...(m.get(c.brand_id) ?? []), { platform_key: String(c.platform_key ?? ''), platform: plataformaDelCanal(c), via }]);
+  }
+  for (const v of m.values()) v.sort((a, b) => a.platform.localeCompare(b.platform));
+  return m;
+}
+
 export function viaDe(vias: Map<string, Via>, brandId: string, platform: string, sourceLab?: string | null): Via {
   if (sourceLab === ORIGEN_DETECTADO) return 'detectada';
   return vias.get(`${brandId}\u0000${String(platform ?? '').toUpperCase()}`) ?? 'sin_canal';

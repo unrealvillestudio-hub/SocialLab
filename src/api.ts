@@ -31,7 +31,14 @@ export async function ops<T>(token: string, vista: string, params: Record<string
 
 // ── Formas de las respuestas ─────────────────────────────────────────────────
 
-export interface Marca { brand_id: string; nombre: string; huso: string | null; plataformas_en_vivo: string[] }
+export interface Canal { platform_key: string; platform: string; via: 'carril' | 'manual' | 'externa' }
+export interface Marca { brand_id: string; nombre: string; huso: string | null; plataformas_en_vivo: string[]; canales: Canal[] }
+
+/** Las plataformas que se pueden filtrar: los canales activos y las cuentas con lectura en vivo de las marcas elegidas. */
+export function plataformasDe(marcas: readonly Marca[], marca: string): string[] {
+  const elegidas = marca ? marcas.filter((m) => m.brand_id === marca) : marcas;
+  return [...new Set(elegidas.flatMap((m) => [...(m.canales ?? []).map((c) => c.platform), ...m.plataformas_en_vivo]))].sort();
+}
 export interface Catalogo { sub: string; role: string; marcas: Marca[]; alcance_total: boolean }
 
 export interface Metrica { metric: string; value: number; age_minutes: number; fetched_at: string }

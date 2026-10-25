@@ -6,7 +6,7 @@ import { Aviso, Cargando, Chip, cn, etiquetaFormato, etiquetaPlataforma, fechaHo
  * CALENDARIO, sólo lectura. Franjas de `intel.brand_publish_slots` y filas de `scheduled_posts` por
  * día. Se agenda donde ya se agenda (el carril y el Orchestrator), no aquí.
  */
-export default function Calendario({ token, marca, marcas }: { token: string; marca: string; marcas: Marca[] }) {
+export default function Calendario({ token, marca, plataforma, marcas }: { token: string; marca: string; plataforma: string; marcas: Marca[] }) {
   const [data, setData] = useState<RespCalendario | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,12 +23,15 @@ export default function Calendario({ token, marca, marcas }: { token: string; ma
 
   const dias = useMemo(() => {
     if (!data) return [];
+    // La franja trae la clave del canal (`meta_ig`, `linkedin`…); su plataforma sale del canal de la marca.
+    const plataformaDeFranja = (brand: string, key: string) =>
+      marcas.find((m) => m.brand_id === brand)?.canales?.find((c) => c.platform_key === key)?.platform ?? key.toUpperCase();
     const items = [
-      ...data.franjas.map((f) => ({
+      ...data.franjas.filter((f) => !plataforma || plataformaDeFranja(f.brand_id, f.platform_key) === plataforma).map((f) => ({
         clave: `f-${f.id}`, brand_id: f.brand_id, cuando: f.slot_at, tipo: 'franja' as const,
         canal: f.platform_key, estado: f.status, formato: f.format, piece_id: f.piece_id, detalle: f.failed_reason,
       })),
-      ...data.publicaciones.map((p) => ({
+      ...data.publicaciones.filter((p) => !plataforma || p.platform === plataforma).map((p) => ({
         clave: `p-${p.id}`, brand_id: p.brand_id, cuando: p.scheduled_at, tipo: 'publicación' as const,
         canal: etiquetaPlataforma(p.platform), estado: p.status, formato: p.media_type ? etiquetaFormato(p.media_type) : null,
         piece_id: p.piece_id, detalle: null as string | null,
@@ -42,7 +45,7 @@ export default function Calendario({ token, marca, marcas }: { token: string; ma
       porDia.set(dia, [...(porDia.get(dia) ?? []), i]);
     }
     return [...porDia.entries()];
-  }, [data, marcas]);
+  }, [data, marcas, plataforma]);
 
   if (error) return <Aviso tono="error">No se pudo leer el calendario: {error}</Aviso>;
   if (!data) return <Cargando />;
