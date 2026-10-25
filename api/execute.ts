@@ -7,7 +7,11 @@
 
 declare const process: { env: Record<string, string | undefined> };
 
-const CLAUDE_MODEL = 'claude-sonnet-5';
+// MODELO-DATO (2026-10-25) — el modelo NO vive aquí: es la fila activa de `public.ops_lab_models` para
+// lab `sociallab`, rol `sync` (la adaptación del texto que se publica). Sin fila, la petición falla con
+// `MODELO_SIN_DATO`: no hay un modelo de respaldo escrito, que sería la constante de antes con otro nombre.
+const MODELO_LAB = 'sociallab';
+const MODELO_ROL = 'sync';
 // Env vars: prefijo VITE_ no existe en runtime Vercel serverless (es build-time
 // del cliente Vite). Usamos las vars estándar de server.
 const SB_URL  = () => process.env.SUPABASE_URL ?? '';
@@ -48,6 +52,18 @@ async function sb<T>(path: string): Promise<T | null> {
   } catch { return null; }
 }
 
+async function modeloDeLab(): Promise<string> {
+  const res = await fetch(
+    `${SB_URL()}/rest/v1/ops_lab_models?select=model_id&lab=eq.${MODELO_LAB}&role=eq.${MODELO_ROL}&active=is.true&limit=2`,
+    { headers: { apikey: SB_KEY(), Authorization: `Bearer ${SB_KEY()}` } },
+  );
+  if (!res.ok) throw new Error(`MODELO_ILEGIBLE: ops_lab_models ${MODELO_LAB}/${MODELO_ROL} — HTTP ${res.status}`);
+  const filas = (await res.json()) as Array<{ model_id?: string }>;
+  const modelo = filas.length === 1 ? String(filas[0].model_id ?? '').trim() : '';
+  if (!modelo) throw new Error(`MODELO_SIN_DATO: ops_lab_models no tiene una fila activa para ${MODELO_LAB}/${MODELO_ROL} (${filas.length})`);
+  return modelo;
+}
+
 async function sbInsert(table: string, data: object): Promise<{ id?: string; error?: string }> {
   try {
     const res = await fetch(`${SB_URL()}/rest/v1/${table}`, {
@@ -71,7 +87,8 @@ async function sbInsert(table: string, data: object): Promise<{ id?: string; err
 async function adaptForPlatform(
   rawCopy: string,
   platform: string,
-  brandId: string
+  brandId: string,
+  modelo: string,
 ): Promise<string> {
   const brand = await sb<any>(`brands?id=eq.${brandId}&select=name,language_primary`);
   const idioma = brand?.language_primary ?? 'es-ES';
@@ -95,7 +112,7 @@ async function adaptForPlatform(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model: modelo,
       max_tokens: 600,
       // Sonnet 5 rechaza temperature/top_p/top_k con 400 → se elimina.
       // Sonnet 5 corre adaptive thinking si se omite `thinking`; con
@@ -164,9 +181,11 @@ export default async function handler(req: any, res: any) {
     ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   try {
+    // Una sola lectura por petición: todas las plataformas se adaptan con el mismo modelo.
+    const modelo = await modeloDeLab();
     const results = await Promise.all(
       platforms.map(async (platform) => {
-        const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!);
+        const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!, modelo);
 
         const { id, error } = await sbInsert('scheduled_posts', {
           brand_id:                 body.brandId!,
