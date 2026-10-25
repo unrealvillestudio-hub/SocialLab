@@ -18,6 +18,7 @@ import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
   lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
+import { combinarMetricas, aumentosDeComentarios } from '../src/pulso.ts';
 
 let fallos = 0;
 function test(nombre, fn) {
@@ -144,6 +145,41 @@ test('Facebook: id de página_post, permalink_url y full_picture', () => {
   assert.equal(p.platform_post_id, '11_22');
   assert.equal(p.imagen, 'https://cdn/f.jpg');
   assert.equal(p.texto, 'm');
+});
+
+test('la lectura en vivo trae me gusta y comentarios con el nombre de las métricas de SignalLab', () => {
+  const [ig, igSin] = normalizarRespuesta('INSTAGRAM', { data: [
+    { id: '1', media_type: 'IMAGE', like_count: 13, comments_count: 4 },
+    { id: '2', media_type: 'IMAGE' },
+  ] });
+  assert.deepEqual(ig.contadores, [{ metric: 'likes', value: 13 }, { metric: 'comments', value: 4 }]);
+  assert.deepEqual(igSin.contadores, [], 'un contador que la plataforma no devuelve no es un cero');
+  const [fb] = normalizarRespuesta('FACEBOOK', { data: [
+    { id: '11_22', likes: { summary: { total_count: 0 } }, comments: { summary: { total_count: 2 } } },
+  ] });
+  assert.deepEqual(fb.contadores, [{ metric: 'likes', value: 0 }, { metric: 'comments', value: 2 }]);
+});
+
+test('pills: lo en vivo sustituye a lo medido en la misma métrica y se añade si falta', () => {
+  const c = combinarMetricas(
+    [{ metric: 'reach', value: 100 }, { metric: 'likes', value: 10 }],
+    [{ metric: 'likes', value: 12 }, { metric: 'comments', value: 3 }]);
+  assert.deepEqual(c, [
+    { metric: 'reach', value: 100, fuente: 'medido' },
+    { metric: 'likes', value: 12, fuente: 'vivo' },
+    { metric: 'comments', value: 3, fuente: 'vivo' },
+  ]);
+  assert.deepEqual(combinarMetricas([{ metric: 'reach', value: 5 }], undefined), [{ metric: 'reach', value: 5, fuente: 'medido' }]);
+});
+
+test('comentario nuevo: sólo cuando el contador sube entre dos lecturas en vivo', () => {
+  assert.deepEqual(aumentosDeComentarios(null, [{ platform_post_id: 'a', comments: 9 }]), [], 'la primera lectura no avisa');
+  const previo = new Map([['a', 2], ['b', 5]]);
+  assert.deepEqual(aumentosDeComentarios(previo, [
+    { platform_post_id: 'a', comments: 3 },
+    { platform_post_id: 'b', comments: 4 },
+    { platform_post_id: 'c', comments: 7 },
+  ]), [{ platform_post_id: 'a', antes: 2, ahora: 3 }], 'bajar no avisa; un post recién entrado tampoco');
 });
 
 test('una respuesta con error o sin «data» lanza: no se lee como «no publicó nada»', () => {

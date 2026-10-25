@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cn } from './components';
+import { METRICA_COMENTARIOS } from '../pulso';
 
 /**
  * PILLS DE MÉTRICAS, con premio animado (pedido de Sam, 2026-10-25: «que cuando cambien de valor se
@@ -29,7 +30,11 @@ function colorDe(metric: string): string {
 
 const etiqueta = (m: string) => m.replace(/_/g, ' ');
 
-function Pill({ metric, value }: { metric: string; value: number }) {
+interface AccionComentarios { pendientes: number; nuevo: boolean; onClick: () => void }
+
+function Pill({ metric, value, fuente, comentarios }: {
+  metric: string; value: number; fuente?: 'vivo' | 'medido'; comentarios?: AccionComentarios;
+}) {
   const previo = useRef<number | null>(null);
   const [premio, setPremio] = useState<{ delta: number; n: number } | null>(null);
 
@@ -43,30 +48,47 @@ function Pill({ metric, value }: { metric: string; value: number }) {
   }, [value]);
 
   const sube = !!premio && premio.delta > 0;
+  const Raiz = comentarios ? 'button' : 'span';
+  const titulo = `${etiqueta(metric)}: ${value.toLocaleString('en-US')}`
+    + (fuente === 'vivo' ? ' · en vivo, leído de la plataforma' : fuente === 'medido' ? ' · medido por SignalLab' : '')
+    + (comentarios ? ` · ${comentarios.pendientes ? `${comentarios.pendientes} sin responder · ` : ''}abrir la bandeja de este post` : '');
   return (
-    <span
+    <Raiz
       key={premio?.n ?? 0}
-      className={cn('pill', colorDe(metric), premio && (sube ? 'pill-premio' : 'pill-baja'))}
-      title={`${etiqueta(metric)}: ${value.toLocaleString('en-US')}`}
+      {...(comentarios ? { type: 'button' as const, onClick: comentarios.onClick } : {})}
+      className={cn('pill', colorDe(metric), premio && (sube ? 'pill-premio' : 'pill-baja'),
+        comentarios && 'pill-accion', comentarios?.nuevo && 'pill-nuevo')}
+      title={titulo}
     >
+      {fuente === 'vivo' && <span className="pill-vivo" aria-label="en vivo" />}
       <span className="pill-etiqueta">{etiqueta(metric)}</span>
       <b className="pill-valor">{value.toLocaleString('en-US')}</b>
+      {comentarios?.nuevo && <span className="pill-insignia pill-insignia-nuevo">nuevo</span>}
+      {!comentarios?.nuevo && !!comentarios?.pendientes && <span className="pill-insignia">{comentarios.pendientes} sin resp.</span>}
       {premio && (
         <span className={cn('pill-delta', sube ? 'pill-delta-sube' : 'pill-delta-baja')}>
           {sube ? '+' : '−'}{Math.abs(premio.delta).toLocaleString('en-US')}
         </span>
       )}
       {sube && <span className="pill-chispas" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>}
-    </span>
+    </Raiz>
   );
 }
 
-/** Las pills de un post. Sin métricas, el motivo en texto: nunca un cero que nadie midió. */
-export function Pills({ metricas, sinMedir = 'sin medir' }: { metricas: { metric: string; value: number }[]; sinMedir?: string }) {
+/**
+ * Las pills de un post. Sin métricas, el motivo en texto: nunca un cero que nadie midió.
+ * `comentarios` convierte la pill de comentarios en el acceso a la bandeja de ese post.
+ */
+export function Pills({ metricas, sinMedir = 'sin medir', comentarios }: {
+  metricas: { metric: string; value: number; fuente?: 'vivo' | 'medido' }[]; sinMedir?: string; comentarios?: AccionComentarios;
+}) {
   if (metricas.length === 0) return <span className="text-[10px] font-mono text-zinc-600">{sinMedir}</span>;
   return (
     <div className="flex flex-wrap gap-1.5">
-      {metricas.map((m) => <Pill key={m.metric} metric={m.metric} value={Number(m.value)} />)}
+      {metricas.map((m) => (
+        <Pill key={m.metric} metric={m.metric} value={Number(m.value)} fuente={m.fuente}
+          comentarios={m.metric === METRICA_COMENTARIOS ? comentarios : undefined} />
+      ))}
     </div>
   );
 }

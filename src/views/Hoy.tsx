@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ops, type Marca, type RespAhora } from '../api';
 import { Aviso, Cargando, Chip, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
-import { Pills } from '../ui/Pills';
+import { PillsDePost } from '../ui/Pulso';
 
 /**
  * HOY · «happening now». Ordena por la comparación justa de SignalLab (misma marca, plataforma,
@@ -45,7 +45,7 @@ export default function Hoy({ token, marca, marcas }: { token: string; marca: st
             <Chip>{etiquetaPlataforma(p.platform)}</Chip>
             <Chip>{etiquetaFormato(p.formato)}</Chip>
             <span className="flex-1 min-w-[12rem] truncate text-zinc-400">{p.copy_text ?? ''}</span>
-            <Pills metricas={p.metricas} />
+            <PillsDePost id={p.id} platformPostId={p.platform_post_id} metricas={p.metricas} />
           </li>
         ))}
       </ul>

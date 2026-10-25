@@ -53,6 +53,8 @@ export interface EnVivo {
   brand_id: string; platform: string; platform_post_id: string; permalink: string | null; imagen: string | null;
   texto: string | null; publicado_en: string | null; formato: string; scheduled_post_id: string | null;
   piece_id: string | null; en_carril: boolean;
+  /** Me gusta y comentarios leídos de la plataforma en esta misma lectura (ver `src/pulso.ts`). */
+  contadores: { metric: string; value: number }[];
 }
 export interface RespEnVivo {
   limite: number; lecturas: Array<{ brand_id: string; platform: string; publicaciones: number; error: string | null }>;
