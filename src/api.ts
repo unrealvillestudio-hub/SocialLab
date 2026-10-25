@@ -9,7 +9,11 @@ export class ErrorApi extends Error {
 
 async function leer<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ErrorApi(String((data as any)?.error ?? (data as any)?.detail ?? `Error ${res.status}`), res.status);
+  if (!res.ok) {
+    // `message` nombra la causa concreta (por ejemplo, qué variable de entorno falta); `error` sólo su clase.
+    const d = data as { error?: string; message?: string; detail?: string };
+    throw new ErrorApi(String(d.message ?? d.detail ?? d.error ?? `Error ${res.status}`), res.status);
+  }
   return data as T;
 }
 
@@ -37,6 +41,8 @@ export interface Publicada {
   id: string; brand_id: string; platform: string; media_type: string | null; formato: string;
   platform_post_id: string | null; published_at: string; copy_text: string | null; image_url: string | null;
   media_urls: string[] | null; piece_id: string | null; enlace?: string | null; metricas: Metrica[];
+  /** La vía por la que salió: el carril o una persona a mano. */
+  via?: 'carril' | 'manual';
 }
 export interface RespPublicado {
   ventana: { desde: string; hasta: string }; truncado: boolean; total: number; conteos: Conteo[];

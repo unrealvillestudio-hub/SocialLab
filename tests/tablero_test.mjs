@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
-  lectorDe, ultimasMetricas, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
+  lectorDe, ultimasMetricas, publicacionesManuales, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
 
 let fallos = 0;
@@ -163,6 +163,33 @@ test('la última lectura de cada métrica es la de mayor edad; sin instantáneas
   ]);
   assert.deepEqual(m.get('p1').map((x) => [x.metric, x.value]), [['likes', 2], ['reach', 30]]);
   assert.equal(m.get('p2'), undefined);
+});
+
+// ── 7 · Publicaciones manuales ────────────────────────────────────────────────
+
+test('entran sólo las franjas publicadas de canales manuales, con su enlace y su formato', () => {
+  const canales = [
+    { brand_id: A, platform_key: 'red_manual', publication_path: 'manual' },
+    { brand_id: A, platform_key: 'red_drenada', publication_path: 'drained' },
+  ];
+  const franjas = [
+    { id: 's1', brand_id: A, platform_key: 'red_manual', published_at: '2026-10-23T22:42:32Z', piece_id: 'p1' },
+    { id: 's2', brand_id: A, platform_key: 'red_drenada', published_at: '2026-10-23T22:00:00Z', piece_id: 'p2' },
+    { id: 's3', brand_id: B, platform_key: 'red_manual', published_at: '2026-10-23T21:00:00Z', piece_id: 'p3' },
+    { id: 's4', brand_id: A, platform_key: 'red_manual', published_at: null, piece_id: 'p4' },
+  ];
+  const piezas = [{ id: 'p1', post_url: 'https://ejemplo/p1', format: 'article', copy: 'texto', imagen: 'https://img/p1.png' }];
+  const m = publicacionesManuales(canales, franjas, piezas);
+  assert.equal(m.length, 1, 'ni el canal drenado (saldría dos veces), ni otra marca sin canal manual, ni una franja sin fecha');
+  assert.deepEqual([m[0].platform, m[0].formato, m[0].enlace, m[0].via], ['RED_MANUAL', 'ARTICLE', 'https://ejemplo/p1', 'manual']);
+});
+
+test('una pieza manual sin formato no se cuenta como «una imagen» (ese contrato es de scheduled_posts)', () => {
+  const m = publicacionesManuales(
+    [{ brand_id: A, platform_key: 'x1', publication_path: 'manual' }],
+    [{ id: 's1', brand_id: A, platform_key: 'x1', published_at: '2026-10-23T00:00:00Z', piece_id: null }], []);
+  assert.equal(m[0].formato, '');
+  assert.deepEqual(contar(m), [{ brand_id: A, platform: 'X1', formato: '', total: 1 }]);
 });
 
 if (fallos) { console.error(`\ntablero: ${fallos} fallo(s)`); process.exit(1); }

@@ -19,3 +19,78 @@
     @apply bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-accent/60;
   }
 }
+
+/* ── Pills de métricas con premio (2026-10-25) ─────────────────────────────── */
+@layer components {
+  .pill {
+    @apply relative inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-mono;
+    --c: 161 161 170;
+    color: rgb(var(--c));
+    border-color: rgb(var(--c) / 0.35);
+    background: rgb(var(--c) / 0.10);
+  }
+  .pill-etiqueta { opacity: 0.8; }
+  .pill-valor { @apply text-[11px]; color: rgb(var(--c)); filter: brightness(1.35); }
+  .pill-cian { --c: 34 211 238; }
+  .pill-azul { --c: 96 165 250; }
+  .pill-rosa { --c: 244 114 182; }
+  .pill-ambar { --c: 251 191 36; }
+  .pill-verde { --c: 52 211 153; }
+  .pill-violeta { --c: 167 139 250; }
+  .pill-naranja { --c: 251 146 60; }
+  .pill-lima { --c: 163 230 53; }
+  .pill-rojo { --c: 248 113 113; }
+
+  .pill-premio { animation: pill-pop 0.9s cubic-bezier(.2, 1.6, .4, 1) both, pill-brillo 1.6s ease-out both; z-index: 10; }
+  .pill-baja { animation: pill-sacudida 0.5s ease-in-out both; }
+
+  .pill-delta {
+    @apply pointer-events-none absolute -top-1 right-0 text-[11px] font-bold;
+    animation: pill-flota 1.6s ease-out both;
+  }
+  .pill-delta-sube { color: rgb(var(--c)); text-shadow: 0 0 8px rgb(var(--c) / 0.9); }
+  .pill-delta-baja { color: rgb(161 161 170); }
+
+  .pill-chispas { @apply pointer-events-none absolute inset-0; }
+  .pill-chispas i {
+    position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; border-radius: 9999px;
+    background: rgb(var(--c)); box-shadow: 0 0 6px rgb(var(--c));
+    animation: pill-chispa 0.9s ease-out both;
+  }
+  .pill-chispas i:nth-child(1) { --dx: -22px; --dy: -14px; }
+  .pill-chispas i:nth-child(2) { --dx: 22px;  --dy: -14px; }
+  .pill-chispas i:nth-child(3) { --dx: -28px; --dy: 4px; }
+  .pill-chispas i:nth-child(4) { --dx: 28px;  --dy: 4px; }
+  .pill-chispas i:nth-child(5) { --dx: -10px; --dy: 16px; }
+  .pill-chispas i:nth-child(6) { --dx: 10px;  --dy: -20px; }
+}
+
+@keyframes pill-pop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.45) rotate(-3deg); }
+  55% { transform: scale(0.92) rotate(2deg); }
+  75% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes pill-brillo {
+  0% { box-shadow: 0 0 0 0 rgb(var(--c) / 0.9); background: rgb(var(--c) / 0.45); }
+  60% { box-shadow: 0 0 18px 6px rgb(var(--c) / 0.35); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--c) / 0); background: rgb(var(--c) / 0.10); }
+}
+@keyframes pill-flota {
+  0% { opacity: 0; transform: translateY(4px) scale(0.6); }
+  20% { opacity: 1; transform: translateY(-8px) scale(1.25); }
+  100% { opacity: 0; transform: translateY(-30px) scale(1); }
+}
+@keyframes pill-chispa {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.3); }
+}
+@keyframes pill-sacudida {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pill-premio, .pill-baja, .pill-delta, .pill-chispas i { animation-duration: 0.01ms; }
+}

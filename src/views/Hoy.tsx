@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ops, type Marca, type RespAhora } from '../api';
-import { Aviso, Cargando, Chip, Metricas, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
+import { Aviso, Cargando, Chip, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
+import { Pills } from '../ui/Pills';
 
 /**
  * HOY · «happening now». Ordena por la comparación justa de SignalLab (misma marca, plataforma,
@@ -11,13 +12,16 @@ export default function Hoy({ token, marca, marcas }: { token: string; marca: st
   const [data, setData] = useState<RespAhora | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [tick, setTick] = useState(0);
+  // Se relee cada minuto: las pills celebran cuando SignalLab escribe un valor nuevo.
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 60_000); return () => clearInterval(t); }, []);
+
   useEffect(() => {
     let vivo = true;
-    setError(null);
     ops<RespAhora>(token, 'ahora', { marca: marca || undefined })
-      .then((r) => vivo && setData(r)).catch((e) => vivo && setError(e.message));
+      .then((r) => { if (vivo) { setData(r); setError(null); } }).catch((e) => vivo && setError(e.message));
     return () => { vivo = false; };
-  }, [token, marca]);
+  }, [token, marca, tick]);
 
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
@@ -41,7 +45,7 @@ export default function Hoy({ token, marca, marcas }: { token: string; marca: st
             <Chip>{etiquetaPlataforma(p.platform)}</Chip>
             <Chip>{etiquetaFormato(p.formato)}</Chip>
             <span className="flex-1 min-w-[12rem] truncate text-zinc-400">{p.copy_text ?? ''}</span>
-            <Metricas metricas={p.metricas} />
+            <Pills metricas={p.metricas} />
           </li>
         ))}
       </ul>
