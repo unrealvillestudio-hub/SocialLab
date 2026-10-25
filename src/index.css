@@ -89,6 +89,18 @@
   .pill-nuevo { box-shadow: 0 0 0 1px rgb(248 113 113 / 0.7); }
   .pill-insignia { @apply rounded-full px-1.5 text-[9px] font-sans font-semibold; background: rgb(var(--c) / 0.25); color: rgb(var(--c)); filter: brightness(1.3); }
   .pill-insignia-nuevo { background: rgb(248 113 113); color: #000; filter: none; animation: insignia-late 1.2s ease-in-out infinite; }
+  /* Pill del asesor: color por urgencia; mientras haya un consejo sin abrir, un halo que gira y late sin parar. */
+  .pill-asesor { @apply font-bold; overflow: visible; }
+  .pill-asesor-atencion { --c: 255 176 32; }
+  .pill-asesor-oportunidad { --c: 0 255 209; }
+  .pill-asesor-info { --c: 242 240 236; }
+  .pill-asesor-nueva { animation: asesor-late 1.6s ease-in-out infinite; }
+  .pill-asesor-nueva::before {
+    content: ''; position: absolute; inset: -2px; border-radius: 9999px; padding: 1px; pointer-events: none;
+    background: conic-gradient(from var(--giro, 0deg), rgb(var(--c)), transparent 40%, rgb(var(--c)) 60%, transparent);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+    animation: asesor-gira 2.4s linear infinite;
+  }
   .aviso-nuevo { animation: aviso-entra 0.5s cubic-bezier(.2, 1.4, .4, 1) both; }
   .campana { animation: campana 1.2s ease-in-out infinite; transform-origin: top center; }
 
@@ -117,6 +129,9 @@
 @keyframes insignia-late { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgb(248 113 113 / 0); } 50% { transform: scale(1.12); box-shadow: 0 0 0 4px rgb(248 113 113 / 0.35); } }
 @keyframes aviso-entra { from { opacity: 0; transform: translateY(-8px) scale(0.98); } to { opacity: 1; transform: none; } }
 @keyframes campana { 0%, 60%, 100% { transform: rotate(0); } 15% { transform: rotate(14deg); } 30% { transform: rotate(-12deg); } 45% { transform: rotate(6deg); } }
+@property --giro { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes asesor-gira { to { --giro: 360deg; } }
+@keyframes asesor-late { 0%, 100% { box-shadow: 0 0 0 0 rgb(var(--c) / 0); transform: scale(1); } 50% { box-shadow: 0 0 14px 2px rgb(var(--c) / 0.45); transform: scale(1.06); } }
 @keyframes pill-pop {
   0% { transform: scale(1); }
   30% { transform: scale(1.45) rotate(-3deg); }
@@ -145,5 +160,5 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .pill-premio, .pill-baja, .pill-delta, .pill-chispas i { animation-duration: 0.01ms; }
-  .pill-vivo, .pill-insignia-nuevo, .campana, .aviso-nuevo { animation: none; }
+  .pill-vivo, .pill-insignia-nuevo, .campana, .aviso-nuevo, .pill-asesor-nueva, .pill-asesor-nueva::before { animation: none; }
 }

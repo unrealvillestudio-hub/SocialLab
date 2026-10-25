@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle } from 'lucide-react';
+import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle, Sparkles } from 'lucide-react';
 import { entrar, ops, plataformasDe, ErrorApi, type Catalogo, type Sesion } from './api';
 import { Aviso, Cargando, cn, etiquetaPlataforma } from './ui/components';
 import Publicado from './views/Publicado';
@@ -7,15 +7,18 @@ import Calendario from './views/Calendario';
 import Estadisticas from './views/Estadisticas';
 import Comentarios from './views/Comentarios';
 import Hoy from './views/Hoy';
-import { AvisoComentarios, ProveedorPulso } from './ui/Pulso';
+import { AvisoComentarios, ProveedorPulso, usePulso, type FocoAsesor } from './ui/Pulso';
+import Acciones from './views/Acciones';
 
-type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'estadisticas' | 'calendario';
-const PESTANAS: { id: Pestana; etiqueta: string; icono: React.ElementType }[] = [
+type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'acciones' | 'estadisticas' | 'calendario';
+/** `corta`: la etiqueta de la barra inferior del teléfono, donde caben seis pestañas. */
+const PESTANAS: { id: Pestana; etiqueta: string; corta?: string; icono: React.ElementType }[] = [
   { id: 'hoy', etiqueta: 'Hoy', icono: Flame },
   { id: 'publicado', etiqueta: 'Publicado', icono: LayoutGrid },
-  { id: 'comentarios', etiqueta: 'Comentarios', icono: MessageCircle },
-  { id: 'estadisticas', etiqueta: 'Estadísticas', icono: BarChart3 },
-  { id: 'calendario', etiqueta: 'Calendario', icono: CalendarDays },
+  { id: 'comentarios', etiqueta: 'Comentarios', corta: 'Coment.', icono: MessageCircle },
+  { id: 'acciones', etiqueta: 'Acciones', icono: Sparkles },
+  { id: 'estadisticas', etiqueta: 'Estadísticas', corta: 'Métricas', icono: BarChart3 },
+  { id: 'calendario', etiqueta: 'Calendario', corta: 'Agenda', icono: CalendarDays },
 ];
 
 /** El lockup del estudio (>UNREALVILLE studio, BP v1.6) y el nombre de la app. */
@@ -72,7 +75,10 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
   /** La publicación cuya bandeja se abrió desde su pill o desde el aviso; `null` = todas. */
   const [postComentarios, setPostComentarios] = useState<string | null>(null);
   const atender = useCallback((id: string | null) => { setPostComentarios(id); setPestana('comentarios'); }, []);
-  const irA = (id: Pestana) => { setPestana(id); if (id === 'comentarios') setPostComentarios(null); };
+  /** Lo que se abrió desde una pill del asesor: va primero en Acciones. */
+  const [focoAsesor, setFocoAsesor] = useState<FocoAsesor>(null);
+  const abrirAsesor = useCallback((foco: FocoAsesor) => { setFocoAsesor(foco); setPestana('acciones'); }, []);
+  const irA = (id: Pestana) => { setPestana(id); if (id === 'comentarios') setPostComentarios(null); if (id === 'acciones') setFocoAsesor(null); };
 
   useEffect(() => {
     ops<Catalogo>(sesion.session_token, 'catalogo')
@@ -93,7 +99,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
         {error && <Aviso tono="error">{error}</Aviso>}
         {!catalogo && !error && <Cargando />}
         {catalogo && (
-          <ProveedorPulso token={sesion.session_token} marca={marca} onAtender={atender}>
+          <ProveedorPulso token={sesion.session_token} marca={marca} onAtender={atender} onAsesor={abrirAsesor}>
             <div className="flex flex-wrap items-center gap-3">
               {/* Pestañas arriba desde tablet; en el teléfono van en la barra inferior (abajo, al alcance del pulgar). */}
               <nav className="hidden md:flex items-center gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
@@ -101,7 +107,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
                   <button key={p.id} onClick={() => irA(p.id)}
                     className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all border',
                       pestana === p.id ? 'bg-accent/10 text-accent border-accent/40' : 'border-transparent text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800')}>
-                    <p.icono className="w-4 h-4" />{p.etiqueta}
+                    <p.icono className="w-4 h-4" />{p.etiqueta}{p.id === 'acciones' && <InsigniaAsesor />}
                   </button>
                 ))}
               </nav>
@@ -111,19 +117,20 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
                   {catalogo.marcas.map((m) => <option key={m.brand_id} value={m.brand_id}>{m.nombre}</option>)}
                 </select>
                 <select value={plataforma} onChange={(e) => setPlataforma(e.target.value)} className="entrada min-w-0" aria-label="Plataforma">
-                  <option value="">Plataformas: todas</option>
+                  <option value="">Plataformas</option>
                   {plataformas.map((p) => <option key={p} value={p}>{etiquetaPlataforma(p)}</option>)}
                 </select>
               </div>
             </div>
             <h2 className="md:hidden titulo text-2xl text-zinc-100">{PESTANAS.find((p) => p.id === pestana)?.etiqueta}</h2>
-            <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-zinc-800 bg-uv-bg/95 backdrop-blur-md grid grid-cols-5"
+            <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-zinc-800 bg-uv-bg/95 backdrop-blur-md grid grid-cols-6"
               style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
               {PESTANAS.map((p) => (
                 <button key={p.id} onClick={() => irA(p.id)} aria-current={pestana === p.id ? 'page' : undefined}
-                  className={cn('flex flex-col items-center gap-1 py-2.5 text-[10px] border-t-2',
+                  className={cn('relative flex flex-col items-center gap-1 py-2.5 text-[9px] border-t-2 min-w-0',
                     pestana === p.id ? 'text-accent border-accent' : 'text-zinc-500 border-transparent')}>
-                  <p.icono className="w-5 h-5" />{p.etiqueta}
+                  <p.icono className="w-5 h-5" /><span className="truncate max-w-full px-0.5">{p.corta ?? p.etiqueta}</span>
+                  {p.id === 'acciones' && <span className="absolute top-1 right-1/4"><InsigniaAsesor /></span>}
                 </button>
               ))}
             </nav>
@@ -133,6 +140,8 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
             {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
             {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas}
               post={postComentarios} onQuitarFiltro={() => setPostComentarios(null)} />}
+            {pestana === 'acciones' && <Acciones token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas}
+              foco={focoAsesor} onQuitarFoco={() => setFocoAsesor(null)} />}
             {pestana === 'estadisticas' && <Estadisticas token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
             {pestana === 'calendario' && <Calendario token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
           </ProveedorPulso>
@@ -140,4 +149,11 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
       </main>
     </div>
   );
+}
+
+/** Cuántos consejos del asesor están sin abrir: se ve en la pestaña Acciones desde cualquier pestaña. */
+function InsigniaAsesor() {
+  const { tarjetasNuevas } = usePulso();
+  if (!tarjetasNuevas) return null;
+  return <span className="ml-1 inline-flex min-w-4 h-4 px-1 items-center justify-center rounded-full bg-amber-400 text-black text-[9px] font-bold">{tarjetasNuevas}</span>;
 }

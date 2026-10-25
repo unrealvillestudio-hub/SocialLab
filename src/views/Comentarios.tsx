@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { MessageCircle, RefreshCw, Send } from 'lucide-react';
+import { Lock, MessageCircle, RefreshCw, Send } from 'lucide-react';
 import {
   comentarios as leerComentarios, responderComentario, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
@@ -138,21 +138,23 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
   c: Comentario; post?: Publicada; token: string; nombre: string; huso: string | null; onCambio: () => void;
 }) {
   const [texto, setTexto] = useState('');
-  const [enviando, setEnviando] = useState(false);
+  const [enviando, setEnviando] = useState<null | 'publica' | 'privada'>(null);
   const [error, setError] = useState<string | null>(null);
   const estado = ESTADO[c.estado];
+  // Respuesta privada a quien comentó (SocialLab #20): el endpoint dice si se puede y, si no, por qué.
+  const privada = c.privada;
   const puedeResponder = !c.from_brand && c.estado !== 'en_curso';
   const espera_ = c.estado === 'sin_responder' || c.estado === 'fallida';
 
-  const enviar = async () => {
-    setEnviando(true); setError(null);
+  const enviar = async (enPrivado: boolean) => {
+    setEnviando(enPrivado ? 'privada' : 'publica'); setError(null);
     try {
-      await responderComentario(token, c.id, texto);
+      await responderComentario(token, c.id, texto, enPrivado);
       setTexto('');
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : String(e));
     } finally {
-      setEnviando(false);
+      setEnviando(null);
       onCambio();
     }
   };
@@ -190,6 +192,7 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
             const er = ESTADO_RESPUESTA[r.status];
             return (
               <li key={r.id} className="text-xs">
+                {r.kind === 'privada' && <span className="mr-1 text-[10px] text-accent"><Lock className="inline w-2.5 h-2.5" /> privada</span>}
                 <span className="text-zinc-300">{r.message ?? ''}</span>
                 <div className="text-[10px] text-zinc-500">
                   <span className={er.clase}>{er.etiqueta}</span>
@@ -206,11 +209,21 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
         <div className="flex flex-col sm:flex-row sm:items-end gap-2">
           <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={2} placeholder="Escribe la respuesta de la marca…"
             className="entrada flex-1 resize-y" />
-          <button onClick={enviar} disabled={enviando || !texto.trim()}
+          <button onClick={() => enviar(false)} disabled={!!enviando || !texto.trim()}
             className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-accent text-black text-xs font-bold disabled:opacity-40">
-            <Send className="w-3.5 h-3.5" /> {enviando ? 'Enviando…' : 'Responder'}
+            <Send className="w-3.5 h-3.5" /> {enviando === 'publica' ? 'Enviando…' : 'Responder'}
           </button>
+          {privada && (
+            <button onClick={() => enviar(true)} disabled={!!enviando || !texto.trim() || !privada.puede}
+              title={privada.puede ? `Mensaje privado a quien comentó${privada.hasta ? ` (hasta ${new Date(privada.hasta).toLocaleString('es')})` : ''}` : privada.motivo ?? undefined}
+              className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg border border-accent/50 text-accent text-xs font-bold disabled:opacity-40">
+              <Lock className="w-3.5 h-3.5" /> {enviando === 'privada' ? 'Enviando…' : 'Responder en privado'}
+            </button>
+          )}
         </div>
+      )}
+      {puedeResponder && privada && !privada.puede && privada.motivo && (
+        <p className="text-[10px] text-zinc-500">En privado: {privada.motivo}.</p>
       )}
       {c.estado === 'fallida' && (
         <p className="text-[10px] text-zinc-500">Antes de reintentar, mira en la plataforma si la respuesta salió: un reintento puede duplicarla.</p>
