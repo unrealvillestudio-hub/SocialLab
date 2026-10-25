@@ -9,7 +9,11 @@ export class ErrorApi extends Error {
 
 async function leer<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ErrorApi(String((data as any)?.error ?? (data as any)?.detail ?? `Error ${res.status}`), res.status);
+  if (!res.ok) {
+    // `message` nombra la causa concreta (por ejemplo, qué variable de entorno falta); `error` sólo su clase.
+    const d = data as { error?: string; message?: string; detail?: string };
+    throw new ErrorApi(String(d.message ?? d.detail ?? d.error ?? `Error ${res.status}`), res.status);
+  }
   return data as T;
 }
 
