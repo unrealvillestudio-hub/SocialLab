@@ -181,6 +181,7 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso }: { p: Publicada; vivo?: 
           <Chip>{etiquetaFormato(p.formato)}</Chip>
           {p.via === 'manual' ? <Chip className="bg-sky-500/10 text-sky-300">manual</Chip>
             : p.via === 'externa' ? <Chip className="bg-violet-500/10 text-violet-300">externa</Chip>
+            : p.via === 'detectada' ? <Chip className="bg-orange-500/10 text-orange-300" >detectada fuera del sistema</Chip>
             : p.via === 'sin_canal' ? <Chip className="bg-red-500/10 text-red-300">sin canal</Chip>
             : vivo ? <Chip className="bg-emerald-500/10 text-emerald-300">en vivo</Chip>
             : leidoEnVivo ? <Chip className="bg-amber-500/10 text-amber-300" >no está en la lectura reciente</Chip> : null}
