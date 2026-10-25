@@ -4,7 +4,7 @@
  *   GET  ?marca=&desde=&hasta=   los comentarios de las marcas del alcance, leídos de
  *                                `content.post_comments` (los escribe el colector de SignalLab), con
  *                                su estado; lo que espera respuesta va primero
- *   POST { post_comment_id, message }
+ *   POST { post_comment_id, message, privada? }
  *                                responde un comentario desde la cuenta de la marca:
  *                                1. asienta la respuesta en `content.comment_replies` como `requested`,
  *                                   con quién la pidió (`sub` de la sesión) y desde qué cuenta;
@@ -14,6 +14,10 @@
  *                                   plataforma devuelve el mismo id. Si no, queda `sent` con el motivo.
  *                                Un fallo de la plataforma queda `failed` con el error: nada se pierde
  *                                en silencio.
+ *                                Con `privada: true` (2026-10-25) responde en privado a quien comentó, con
+ *                                `private_reply_tool` y `message_read_tool`: una vez por comentario y dentro
+ *                                de `private_reply_window_minutes`. El GET dice, por comentario, si se puede
+ *                                (`privada.puede`) y, si no, por qué (`privada.motivo`).
  *
  * Autenticación: la misma sesión del tablero (`exigirOperador`). Un comentario de una marca fuera del
  * alcance es 403. Nada de este archivo nombra una plataforma: qué herramienta responde y cuál lee viene
@@ -22,8 +26,8 @@
 import { ventana, enAlcance, marcasConsultadas, TODAS } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida, SB_URL, SB_KEY } from './_opsShared.js';
 import {
-  estados, ordenar, objetivoDeRespuesta, mensajeValido, hayEnVuelo, verificada,
-  type Comentario, type Respuesta, type Estado,
+  estados, ordenar, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
+  type Comentario, type Respuesta, type Estado, type Clase,
 } from './_commentsCore.js';
 
 const MAX_COMENTARIOS = 1000;
@@ -68,7 +72,7 @@ const COLUMNAS_COMENTARIO = [
   'id', 'platform', 'platform_comment_id', 'scheduled_post_id', 'brand_id', 'platform_post_id', 'parent_comment_id',
   'author_name', 'from_brand', 'text', 'like_count', 'commented_at', 'first_seen_at',
 ].join(',');
-const COLUMNAS_RESPUESTA = 'id,post_comment_id,status,message,requested_by,requested_at,platform_reply_id,sent_at,verified_at,error';
+const COLUMNAS_RESPUESTA = 'id,post_comment_id,kind,status,message,requested_by,requested_at,platform_reply_id,sent_at,verified_at,error';
 
 type FilaComentario = Comentario & Record<string, unknown>;
 type FilaRespuesta = Respuesta & Record<string, unknown>;
@@ -93,10 +97,14 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
     + `&commented_at=lt.${encodeURIComponent(v.hasta)}&order=commented_at.desc&limit=${MAX_COMENTARIOS}`, 'content');
   const respuestas = await respuestasDe(comentarios.map((c) => c.id));
   const est = estados(comentarios, respuestas);
+  const plataformas = await sbGet<Plataforma>(`signal_platforms?select=${COLUMNAS_PLATAFORMA}&active=is.true`, 'intel');
+  const ventanaDe = new Map(plataformas.map((p) => [p.platform, p.private_reply_window_minutes && p.private_reply_tool ? p.private_reply_window_minutes : null]));
+  const ahora = Date.now();
   const porComentario = new Map<number, FilaRespuesta[]>();
   for (const r of respuestas) porComentario.set(r.post_comment_id, [...(porComentario.get(r.post_comment_id) ?? []), r]);
   const filas = ordenar(comentarios.map((c) => ({
     ...c, estado: est.get(c.id) as Estado, respuestas: porComentario.get(c.id) ?? [],
+    privada: privadaDisponible(c, porComentario.get(c.id) ?? [], ventanaDe.get(c.platform) ?? null, ahora),
   })));
   const pendientes = filas.filter((f) => f.estado === 'sin_responder' || f.estado === 'fallida').length;
   return { ventana: v, total: filas.length, pendientes, truncado: comentarios.length >= MAX_COMENTARIOS, comentarios: filas };
@@ -104,13 +112,19 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
 
 // ── POST ──────────────────────────────────────────────────────────────────────
 
-interface Plataforma { platform: string; account_column: string | null; reply_tool: string | null; comment_read_tool: string | null }
+interface Plataforma {
+  platform: string; account_column: string | null; reply_tool: string | null; comment_read_tool: string | null;
+  private_reply_tool: string | null; private_reply_window_minutes: number | null; message_read_tool: string | null;
+}
+const COLUMNAS_PLATAFORMA =
+  'platform,account_column,reply_tool,comment_read_tool,private_reply_tool,private_reply_window_minutes,message_read_tool';
 
 async function responder(cuerpo: any, sub: string, alcance: typeof TODAS | string[]) {
   const id = Number(cuerpo?.post_comment_id);
   if (!Number.isInteger(id) || id <= 0) return { status: 400, body: { error: 'post_comment_id inválido' } };
   let message: string;
   try { message = mensajeValido(cuerpo?.message); } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
+  const clase: Clase = cuerpo?.privada === true ? 'privada' : 'publica';
 
   const [c] = await sbGet<FilaComentario>(`post_comments?select=${COLUMNAS_COMENTARIO}&id=eq.${id}`, 'content');
   if (!c) return { status: 404, body: { error: 'comentario no encontrado' } };
@@ -118,10 +132,12 @@ async function responder(cuerpo: any, sub: string, alcance: typeof TODAS | strin
   if (c.from_brand) return { status: 422, body: { error: 'ese comentario es de la propia marca' } };
 
   const [p] = await sbGet<Plataforma>(
-    `signal_platforms?select=platform,account_column,reply_tool,comment_read_tool&platform=eq.${encodeURIComponent(c.platform)}&active=is.true`,
+    `signal_platforms?select=${COLUMNAS_PLATAFORMA}&platform=eq.${encodeURIComponent(c.platform)}&active=is.true`,
     'intel');
-  if (!p?.reply_tool || !p.comment_read_tool || !p.account_column) {
-    return { status: 422, body: { error: `la plataforma ${c.platform} no tiene respuesta configurada en intel.signal_platforms` } };
+  const herramienta = clase === 'privada' ? p?.private_reply_tool : p?.reply_tool;
+  const lectora = clase === 'privada' ? p?.message_read_tool : p?.comment_read_tool;
+  if (!herramienta || !lectora || !p?.account_column) {
+    return { status: 422, body: { error: `la plataforma ${c.platform} no tiene respuesta ${clase} configurada en intel.signal_platforms` } };
   }
   if (!/^[a-z_]+$/.test(p.account_column)) throw new LecturaFallida('signal_platforms', `account_column ilegible: ${p.account_column}`);
   const [cuenta] = await sbGet<Record<string, unknown>>(
@@ -131,22 +147,38 @@ async function responder(cuerpo: any, sub: string, alcance: typeof TODAS | strin
     return { status: 422, body: { error: `la marca no tiene cuenta de ${c.platform} conectada` } };
   }
 
-  if (hayEnVuelo(await respuestasDe([id]))) {
+  const previas = await respuestasDe([id]);
+  if (hayEnVuelo(previas, Date.now(), clase)) {
     return { status: 409, body: { error: 'ya hay una respuesta en curso para este comentario; espera a que termine' } };
   }
+  if (clase === 'privada') {
+    const d = privadaDisponible(c, previas, p!.private_reply_window_minutes, Date.now());
+    if (!d.puede) return { status: 422, body: { error: `no se puede responder en privado: ${d.motivo}` } };
+  }
 
-  const [fila] = await sbEscribir<FilaRespuesta>('POST', 'comment_replies', {
-    post_comment_id: id, brand_id: c.brand_id, platform: c.platform, account_id: String(accountId),
-    message, requested_by: sub,
-  }, 'content');
+  let fila: FilaRespuesta;
+  try {
+    [fila] = await sbEscribir<FilaRespuesta>('POST', 'comment_replies', {
+      post_comment_id: id, brand_id: c.brand_id, platform: c.platform, account_id: String(accountId),
+      message, requested_by: sub, kind: clase,
+    }, 'content');
+  } catch (err) {
+    // El índice único de la base deja una sola privada viva por comentario: dos envíos a la vez no salen dos veces.
+    if (err instanceof EscrituraFallida && /23505|duplicate key/.test(err.message)) {
+      return { status: 409, body: { error: 'este comentario ya tiene una respuesta privada' } };
+    }
+    throw err;
+  }
   const filtro = `comment_replies?id=eq.${encodeURIComponent(fila.id)}`;
 
   let idRespuesta: string | null = null;
   try {
-    const r = await mcpLeer(p.reply_tool, {
-      brand_id: c.brand_id, post_id: c.platform_post_id, comment_id: objetivoDeRespuesta(c), message,
-    }) as { id?: unknown };
-    idRespuesta = typeof r?.id === 'string' && r.id ? r.id : null;
+    const r = await mcpLeer(herramienta, {
+      brand_id: c.brand_id, post_id: c.platform_post_id,
+      comment_id: clase === 'privada' ? objetivoDePrivada(c) : objetivoDeRespuesta(c), message,
+    }) as { id?: unknown; message_id?: unknown };
+    const crudo = clase === 'privada' ? r?.message_id : r?.id;
+    idRespuesta = typeof crudo === 'string' && crudo ? crudo : null;
     if (!idRespuesta) throw new Error('la plataforma no devolvió el id de la respuesta');
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -158,7 +190,8 @@ async function responder(cuerpo: any, sub: string, alcance: typeof TODAS | strin
 
   let motivo: string | null = null;
   try {
-    const leida = await mcpLeer(p.comment_read_tool, { brand_id: c.brand_id, comment_id: idRespuesta });
+    const leida = await mcpLeer(lectora, clase === 'privada'
+      ? { brand_id: c.brand_id, message_id: idRespuesta } : { brand_id: c.brand_id, comment_id: idRespuesta });
     if (!verificada(leida, idRespuesta)) motivo = 'al leerla, la plataforma no devolvió la respuesta';
   } catch (err) {
     motivo = `no se pudo leer la respuesta: ${err instanceof Error ? err.message : String(err)}`;
