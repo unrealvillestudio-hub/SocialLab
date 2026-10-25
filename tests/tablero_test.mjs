@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
-  lectorDe, ultimasMetricas, publicacionesManuales, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
+  lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
 
 let fallos = 0;
@@ -165,31 +165,43 @@ test('la última lectura de cada métrica es la de mayor edad; sin instantáneas
   assert.equal(m.get('p2'), undefined);
 });
 
-// ── 7 · Publicaciones manuales ────────────────────────────────────────────────
+// ── 7 · El libro: vía y formato de cada fila ──────────────────────────────────
 
-test('entran sólo las franjas publicadas de canales manuales, con su enlace y su formato', () => {
-  const canales = [
-    { brand_id: A, platform_key: 'red_manual', publication_path: 'manual' },
-    { brand_id: A, platform_key: 'red_drenada', publication_path: 'drained' },
-  ];
-  const franjas = [
-    { id: 's1', brand_id: A, platform_key: 'red_manual', published_at: '2026-10-23T22:42:32Z', piece_id: 'p1' },
-    { id: 's2', brand_id: A, platform_key: 'red_drenada', published_at: '2026-10-23T22:00:00Z', piece_id: 'p2' },
-    { id: 's3', brand_id: B, platform_key: 'red_manual', published_at: '2026-10-23T21:00:00Z', piece_id: 'p3' },
-    { id: 's4', brand_id: A, platform_key: 'red_manual', published_at: null, piece_id: 'p4' },
-  ];
-  const piezas = [{ id: 'p1', post_url: 'https://ejemplo/p1', format: 'article', copy: 'texto', imagen: 'https://img/p1.png' }];
-  const m = publicacionesManuales(canales, franjas, piezas);
-  assert.equal(m.length, 1, 'ni el canal drenado (saldría dos veces), ni otra marca sin canal manual, ni una franja sin fecha');
-  assert.deepEqual([m[0].platform, m[0].formato, m[0].enlace, m[0].via], ['RED_MANUAL', 'ARTICLE', 'https://ejemplo/p1', 'manual']);
+const CANALES = [
+  { brand_id: A, platform_key: 'red_drenada', publication_path: 'drained', provider: 'RED_UNO' },
+  { brand_id: A, platform_key: 'red_manual', publication_path: 'manual', provider: 'RED_DOS' },
+  { brand_id: A, platform_key: 'web', publication_path: 'external', provider: null },
+];
+
+test('la vía sale del canal, cruzado por la plataforma que declara (o su clave en mayúsculas)', () => {
+  const v = viasPorCanal(CANALES);
+  assert.equal(viaDe(v, A, 'RED_UNO'), 'carril');
+  assert.equal(viaDe(v, A, 'red_dos'), 'manual');
+  assert.equal(viaDe(v, A, 'WEB'), 'externa', 'sin provider_platform, la clave del canal en mayúsculas');
+  assert.equal(viaDe(v, B, 'RED_UNO'), 'sin_canal', 'otra marca sin canal: se dice, no se adivina');
 });
 
-test('una pieza manual sin formato no se cuenta como «una imagen» (ese contrato es de scheduled_posts)', () => {
-  const m = publicacionesManuales(
-    [{ brand_id: A, platform_key: 'x1', publication_path: 'manual' }],
-    [{ id: 's1', brand_id: A, platform_key: 'x1', published_at: '2026-10-23T00:00:00Z', piece_id: null }], []);
-  assert.equal(m[0].formato, '');
-  assert.deepEqual(contar(m), [{ brand_id: A, platform: 'X1', formato: '', total: 1 }]);
+test('media_type NULL es «una imagen» sólo en el carril; en lo manual manda el formato de la pieza', () => {
+  assert.equal(formatoDeFila(null, 'carril', 'post'), FORMATO_SIN_TIPO);
+  assert.equal(formatoDeFila(null, 'manual', 'article'), 'ARTICLE');
+  assert.equal(formatoDeFila(null, 'manual', 'post'), 'POST');
+  assert.equal(formatoDeFila(null, 'externa', null), '', 'sin pieza no se inventa un formato');
+  assert.equal(formatoDeFila('CAROUSEL', 'manual', 'post'), 'CAROUSEL', 'un media_type declarado manda');
+});
+
+test('una misma pieza manual cuenta UNA vez, con su formato real', () => {
+  // El caso del 2026-10-25: la fila del libro y la franja se pintaban como dos tarjetas
+  // («una imagen» y «post»). Con una sola fuente, es una fila y un formato.
+  const v = viasPorCanal(CANALES);
+  const fila = { brand_id: A, platform: 'RED_DOS', media_type: null };
+  const formato = formatoDeFila(fila.media_type, viaDe(v, fila.brand_id, fila.platform), 'post');
+  assert.deepEqual(contar([{ ...fila, formato }]), [{ brand_id: A, platform: 'RED_DOS', formato: 'POST', total: 1 }]);
+});
+
+test('el enlace de una fila manual o externa es su platform_post_id cuando es una URL', () => {
+  assert.equal(enlaceDeId('https://ejemplo/p/1'), 'https://ejemplo/p/1');
+  assert.equal(enlaceDeId('18114924758028321'), null);
+  assert.equal(enlaceDeId(null), null);
 });
 
 if (fallos) { console.error(`\ntablero: ${fallos} fallo(s)`); process.exit(1); }

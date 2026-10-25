@@ -41,8 +41,8 @@ export interface Publicada {
   id: string; brand_id: string; platform: string; media_type: string | null; formato: string;
   platform_post_id: string | null; published_at: string; copy_text: string | null; image_url: string | null;
   media_urls: string[] | null; piece_id: string | null; enlace?: string | null; metricas: Metrica[];
-  /** La vía por la que salió: el carril o una persona a mano. */
-  via?: 'carril' | 'manual';
+  /** La vía por la que salió, según su canal: el carril, una persona a mano o un publicador externo (blog). */
+  via?: 'carril' | 'manual' | 'externa' | 'sin_canal';
 }
 export interface RespPublicado {
   ventana: { desde: string; hasta: string }; truncado: boolean; total: number; conteos: Conteo[];

@@ -3,10 +3,10 @@
  *
  * Vistas:
  *   catalogo    las marcas del alcance del operador, con sus plataformas leíbles en vivo
- *   publicado   lo publicado en la ventana, por las dos vías: el carril (`scheduled_posts`,
- *               status='published') y a mano (franjas `published` de los canales con
- *               `publication_path = 'manual'`, con su enlace). Conteos por marca/plataforma/formato
- *               y las métricas de SignalLab cuando existan
+ *   publicado   lo publicado en la ventana, leído del LIBRO (`scheduled_posts`, status='published'),
+ *               que asienta toda publicación: carril, manual y externa (#479). La vía sale del canal
+ *               y el formato de la pieza. Conteos por marca/plataforma/formato y las métricas de
+ *               SignalLab cuando existan
  *   envivo      las publicaciones recientes leídas DESDE LA PLATAFORMA (MCP de Meta), cruzadas con
  *               el registro por `platform_post_id`
  *   calendario  franjas (`intel.brand_publish_slots`) y filas de `scheduled_posts` en la ventana
@@ -17,8 +17,8 @@
  */
 import {
   ventana, contar, formatoDe, ultimasMetricas, marcasConsultadas, lectorDe, normalizarRespuesta,
-  LECTORES_EN_VIVO, TODAS, publicacionesManuales, type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo,
-  type Canal, type FranjaPublicada, type PiezaManual, type Via,
+  LECTORES_EN_VIVO, TODAS, viasPorCanal, viaDe, formatoDeFila, enlaceDeId,
+  type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo, type Canal, type Via,
 } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, esTablaInexistente, mcpLeer, LecturaFallida } from './_opsShared.js';
 
@@ -107,52 +107,47 @@ interface Publicada {
   published_at: string; copy_text: string | null; image_url: string | null; media_urls: string[] | null; piece_id: string | null;
 }
 
-/** Lo publicado a mano en la ventana: franjas `published` de canales manuales, con su pieza. */
-async function manualesDe(v: { desde: string; hasta: string }, marcas: typeof TODAS | string[]) {
-  const [canales, franjas] = await Promise.all([
-    sbGet<Canal>(`brand_publish_channels?publication_path=eq.manual&select=brand_id,platform_key,publication_path${filtroMarcas(marcas)}`, 'intel'),
-    sbGet<FranjaPublicada>(`brand_publish_slots?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}`
-      + `&published_at=lt.${encodeURIComponent(v.hasta)}${filtroMarcas(marcas)}`
-      + `&select=id,brand_id,platform_key,published_at,piece_id&order=published_at.desc&limit=${MAX_FILAS}`, 'intel'),
-  ]);
-  const ids = [...new Set(franjas.map((f) => f.piece_id).filter((x): x is string => !!x))];
-  const piezas: PiezaManual[] = [];
+/**
+ * La vía y el formato de cada fila del libro. La vía sale del canal; el formato, de `media_type` en el
+ * carril y de la pieza en lo manual o externo (ver `formatoDeFila`).
+ */
+async function clasificar<T extends Publicada>(filas: T[], marcas: typeof TODAS | string[]) {
+  const canales = await sbGet<Canal>(
+    `brand_publish_channels?select=brand_id,platform_key,publication_path,provider:config->>provider_platform${filtroMarcas(marcas)}`, 'intel');
+  const vias = viasPorCanal(canales);
+  const conVia = filas.map((f) => ({ f, via: viaDe(vias, f.brand_id, f.platform) }));
+  const ids = [...new Set(conVia.filter((x) => x.via !== 'carril' && !x.f.media_type && x.f.piece_id).map((x) => x.f.piece_id as string))];
+  const formatos = new Map<string, string | null>();
   for (const t of trozos(ids, TROZO)) {
-    piezas.push(...await sbGet<PiezaManual>(
-      `content_pieces?id=${enLista(t)}&select=id,post_url,format,copy:assets->copy->>raw,imagen:assets->image->>url`, 'content'));
+    for (const p of await sbGet<{ id: string; format: string | null }>(`content_pieces?id=${enLista(t)}&select=id,format`, 'content')) {
+      formatos.set(p.id, p.format);
+    }
   }
-  return publicacionesManuales(canales, franjas, piezas);
+  return conVia.map(({ f, via }) => ({
+    ...f,
+    via,
+    formato: formatoDeFila(f.media_type, via, f.piece_id ? formatos.get(f.piece_id) : null),
+    enlace: enlaceDeId(f.platform_post_id)
+      ?? (f.platform_post_id && ENLACE_POR_PLATAFORMA[f.platform] ? ENLACE_POR_PLATAFORMA[f.platform](f.platform_post_id) : null),
+  }));
 }
 
 async function publicado(req: any, marcas: typeof TODAS | string[]) {
   const v = ventana(q(req, 'desde'), q(req, 'hasta'));
   const plataforma = q(req, 'plataforma');
   const formato = q(req, 'formato');
-  const [filas, manuales] = await Promise.all([
-    sbGet<Publicada>(
-      `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}&published_at=lt.${encodeURIComponent(v.hasta)}`
-      + filtroMarcas(marcas)
-      + (plataforma ? `&platform=eq.${encodeURIComponent(plataforma)}` : '')
-      + `&select=id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id`
-      + `&order=published_at.desc&limit=${MAX_FILAS + 1}`),
-    manualesDe(v, marcas),
-  ]);
+  const filas = await sbGet<Publicada>(
+    `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}&published_at=lt.${encodeURIComponent(v.hasta)}`
+    + filtroMarcas(marcas)
+    + (plataforma ? `&platform=eq.${encodeURIComponent(plataforma)}` : '')
+    + `&select=id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id`
+    + `&order=published_at.desc&limit=${MAX_FILAS + 1}`);
   const truncado = filas.length > MAX_FILAS;
-  const delCarril = (truncado ? filas.slice(0, MAX_FILAS) : filas)
-    .filter((f) => !formato || formatoDe(f.media_type) === formato);
-  const aMano = manuales.filter((f) => (!plataforma || f.platform === plataforma) && (!formato || f.formato === formato));
-  const m = await metricasDe(delCarril.map((f) => f.id));
-  const publicaciones = [
-    ...delCarril.map((f) => ({
-      ...f,
-      formato: formatoDe(f.media_type),
-      via: 'carril' as Via,
-      enlace: f.platform_post_id && ENLACE_POR_PLATAFORMA[f.platform] ? ENLACE_POR_PLATAFORMA[f.platform](f.platform_post_id) : null,
-      metricas: m.porPost.get(f.id) ?? [],
-    })),
-    // Una plataforma manual no tiene lector de métricas: sus tarjetas dicen «sin lector», nunca cero.
-    ...aMano.map((f) => ({ ...f, metricas: [] as MetricaLeida[] })),
-  ].sort((a, b) => b.published_at.localeCompare(a.published_at));
+  const clasificadas = (await clasificar(truncado ? filas.slice(0, MAX_FILAS) : filas, marcas))
+    .filter((f) => !formato || f.formato === formato);
+  // Sólo el carril tiene lector de métricas hoy; una fila manual o externa dice «sin lector», nunca cero.
+  const m = await metricasDe(clasificadas.filter((f) => f.via === 'carril').map((f) => f.id));
+  const publicaciones = clasificadas.map((f) => ({ ...f, metricas: m.porPost.get(f.id) ?? ([] as MetricaLeida[]) }));
   return {
     ventana: v,
     truncado,
@@ -231,7 +226,8 @@ async function ahoraMismo(req: any, marcas: typeof TODAS | string[]) {
   const filas = await sbGet<Publicada>(
     `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(desde)}${filtroMarcas(marcas)}`
     + `&select=id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id&order=published_at.desc`);
-  const m = await metricasDe(filas.map((f) => f.id));
+  const clasificadas = await clasificar(filas, marcas);
+  const m = await metricasDe(clasificadas.filter((f) => f.via === 'carril').map((f) => f.id));
   const conMedida = filas.filter((f) => (m.porPost.get(f.id) ?? []).length > 0);
   return {
     minutos,
@@ -243,7 +239,7 @@ async function ahoraMismo(req: any, marcas: typeof TODAS | string[]) {
       : conMedida.length === 0
         ? 'ninguna publicación de la ventana tiene instantáneas todavía'
         : 'la comparación justa de SignalLab todavía no está disponible: se listan sin ordenar',
-    publicaciones: filas.map((f) => ({ ...f, formato: formatoDe(f.media_type), metricas: m.porPost.get(f.id) ?? [] })),
+    publicaciones: clasificadas.map((f) => ({ ...f, metricas: m.porPost.get(f.id) ?? [] })),
   };
 }
 
