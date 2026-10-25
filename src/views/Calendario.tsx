@@ -56,14 +56,14 @@ export default function Calendario({ token, marca, marcas }: { token: string; ma
       {dias.length === 0 && <Aviso>No hay franjas ni publicaciones en la ventana.</Aviso>}
       {dias.map(([dia, items]) => (
         <section key={dia} className={cn('rounded-xl border bg-zinc-900/40 p-3', dia === hoy ? 'border-accent/40' : 'border-zinc-800')}>
-          <h3 className="text-xs font-semibold text-zinc-300 mb-2">
+          <h3 className="titulo text-lg text-zinc-200 mb-2">
             {new Date(`${dia}T12:00:00`).toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })}
             {dia === hoy && <span className="ml-2 text-accent">hoy</span>}
           </h3>
           <ul className="space-y-1">
             {items.map((i) => (
               <li key={i.clave} className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span className="w-28 text-zinc-500 font-mono">{fechaHora(i.cuando, huso(i.brand_id))}</span>
+                <span className="basis-full sm:basis-auto sm:w-28 text-zinc-500">{fechaHora(i.cuando, huso(i.brand_id))}</span>
                 <Chip className="text-zinc-200">{nombre(i.brand_id)}</Chip>
                 <Chip>{i.canal}</Chip>
                 <Chip className={i.tipo === 'franja' ? 'bg-sky-500/10 text-sky-300' : ''}>{i.tipo}</Chip>

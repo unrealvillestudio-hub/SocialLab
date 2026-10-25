@@ -18,7 +18,7 @@ import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
   lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
-import { combinarMetricas, aumentosDeComentarios } from '../src/pulso.ts';
+import { combinarMetricas, aumentosDeComentarios, cuentasActivas, planDeLectura, fusionarLectura } from '../src/pulso.ts';
 
 let fallos = 0;
 function test(nombre, fn) {
@@ -265,6 +265,35 @@ test('estadísticas: totales y medianas sólo de los posts medidos; el top orden
   assert.deepEqual(a.top, ['p2', 'p1'], 'el post sin medir no entra al top');
   assert.deepEqual(a.porFormato, [{ formato: 'SINGLE_IMAGE', publicaciones: 2 }, { formato: 'CAROUSEL', publicaciones: 1 }]);
   assert.deepEqual(a.porDia, [{ dia: '2026-10-20', publicaciones: 2 }, { dia: '2026-10-21', publicaciones: 1 }]);
+});
+
+test('en vivo por actividad: cada minuto las cuentas que publicaron en 7 días; todas cada 10 ciclos', () => {
+  const ahora = Date.parse('2026-10-25T20:00:00Z');
+  const posts = [
+    { brand_id: 'a', platform: 'INSTAGRAM', publicado_en: '2026-10-24T10:00:00Z' },
+    { brand_id: 'a', platform: 'FACEBOOK', publicado_en: '2026-10-01T10:00:00Z' },
+    { brand_id: 'b', platform: 'INSTAGRAM', publicado_en: null },
+  ];
+  assert.deepEqual(cuentasActivas(posts, ahora), ['a:INSTAGRAM']);
+  assert.equal(planDeLectura(3, false, ['a:INSTAGRAM']), 'todas', 'sin lectura previa se lee todo');
+  assert.equal(planDeLectura(10, true, ['a:INSTAGRAM']), 'todas');
+  assert.deepEqual(planDeLectura(3, true, ['a:INSTAGRAM']), ['a:INSTAGRAM']);
+  assert.deepEqual(planDeLectura(3, true, []), [], 'sin cuentas activas, el ciclo no llama a la plataforma');
+});
+
+test('en vivo por actividad: una lectura parcial sólo sustituye las cuentas leídas', () => {
+  const previa = { limite: 50, lecturas: [
+    { brand_id: 'a', platform: 'INSTAGRAM', publicaciones: 1, error: null },
+    { brand_id: 'b', platform: 'INSTAGRAM', publicaciones: 1, error: null },
+  ], publicaciones: [
+    { brand_id: 'a', platform: 'INSTAGRAM', publicado_en: '2026-10-24T10:00:00Z', id: 'a1', c: 1 },
+    { brand_id: 'b', platform: 'INSTAGRAM', publicado_en: '2026-10-20T10:00:00Z', id: 'b1', c: 5 },
+  ] };
+  const nueva = { limite: 50, lecturas: [{ brand_id: 'a', platform: 'INSTAGRAM', publicaciones: 1, error: null }],
+    publicaciones: [{ brand_id: 'a', platform: 'INSTAGRAM', publicado_en: '2026-10-24T10:00:00Z', id: 'a1', c: 2 }] };
+  const f = fusionarLectura(previa, nueva);
+  assert.deepEqual(f.publicaciones.map((p) => [p.id, p.c]), [['a1', 2], ['b1', 5]]);
+  assert.equal(f.lecturas.length, 2);
 });
 
 // ── 7 · Métricas de la cuenta ─────────────────────────────────────────────────

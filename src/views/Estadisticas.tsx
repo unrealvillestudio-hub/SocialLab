@@ -51,11 +51,11 @@ export default function Estadisticas({ token, marca, marcas }: { token: string; 
       <div className="flex flex-wrap items-center gap-2">
         {RANGOS.map((r) => (
           <button key={r} onClick={() => setDias(r)}
-            className={cn('px-3 py-1.5 rounded-lg text-xs border', dias === r ? 'bg-accent text-black border-accent' : 'border-zinc-800 text-zinc-400 hover:bg-zinc-800')}>
+            className={cn('px-3 py-2 rounded-lg text-xs border', dias === r ? 'bg-accent/10 text-accent border-accent/50' : 'border-zinc-800 text-zinc-400 hover:bg-zinc-800')}>
             {r} días
           </button>
         ))}
-        <span className="ml-auto text-[11px] text-zinc-500">Publicaciones del carril y detectadas; las manuales y externas no tienen lector de métricas.</span>
+        <span className="basis-full sm:basis-auto sm:ml-auto text-[11px] text-zinc-500">Publicaciones del carril y detectadas; las manuales y externas no tienen lector de métricas.</span>
       </div>
 
       {error && <Aviso tono="error">No se pudieron leer las estadísticas: {error}</Aviso>}
@@ -83,13 +83,13 @@ function Tarjeta({ e, c, nombre, huso, cuenta }: {
 }) {
   const platform = (e ?? c)!.platform;
   return (
-    <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-4">
+    <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-3 sm:p-4 space-y-4 min-w-0">
       <header className="flex flex-wrap items-center gap-2">
         <Chip className="text-zinc-100">{nombre}</Chip>
         <Chip>{etiquetaPlataforma(platform)}</Chip>
         {c?.seguidores && (
           <span className="flex items-center gap-1.5 text-sm text-zinc-100" title={`seguidores al ${c.seguidores.fecha}`}>
-            <Users className="w-4 h-4 text-accent" /><b>{numero(c.seguidores.value)}</b><span className="text-[11px] text-zinc-500">{c.seguidores.value === 1 ? 'seguidor' : 'seguidores'}</span>
+            <Users className="w-4 h-4 text-accent" /><b className="titulo text-2xl">{numero(c.seguidores.value)}</b><span className="text-[11px] text-zinc-500">{c.seguidores.value === 1 ? 'seguidor' : 'seguidores'}</span>
           </span>
         )}
         {e && <span className="ml-auto text-[11px] text-zinc-500">{e.publicaciones} publicadas · {e.medidas} medidas</span>}
@@ -126,14 +126,14 @@ function Cuenta({ c, relectura }: { c: ResumenCuenta; relectura: number }) {
           {c.totales.map((t) => (
             <div key={t.metric} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3" title={t.nota ?? undefined}>
               <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(t.metric)}</div>
-              <div className="text-xl font-semibold text-zinc-100">{numero(t.total)}</div>
+              <div className="titulo text-3xl text-zinc-100">{numero(t.total)}</div>
               <div className="text-[10px] text-zinc-500">{t.dias === 1 ? '1 día medido' : `${t.dias} días medidos`}</div>
             </div>
           ))}
           {c.campos.map((f) => (
             <div key={f.metric} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
               <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(f.metric)}</div>
-              <div className="text-xl font-semibold text-zinc-100">{numero(f.value)}</div>
+              <div className="titulo text-3xl text-zinc-100">{numero(f.value)}</div>
               <div className="text-[10px] text-zinc-500">al {f.fecha}</div>
             </div>
           ))}
@@ -150,7 +150,7 @@ function Cuenta({ c, relectura }: { c: ResumenCuenta; relectura: number }) {
             <div className="space-y-1">
               {d.valores.slice(0, 8).map((v) => (
                 <div key={v.valor} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-28 truncate text-zinc-400">{etiquetaMetrica(v.valor.toLowerCase())}</span>
+                  <span className="w-20 sm:w-28 truncate text-zinc-400">{etiquetaMetrica(v.valor.toLowerCase())}</span>
                   <div className="flex-1 h-2 rounded-full bg-zinc-800 overflow-hidden">
                     <div className="h-full bg-accent/70" style={{ width: `${(v.total / total) * 100}%` }} />
                   </div>
@@ -234,7 +234,7 @@ function Publicaciones({ e, huso }: { e: Estadistica; huso: string | null }) {
             {e.metricas.map((m, i) => (
               <div key={m.metric} className={cn('rounded-xl border p-3', i === 0 ? 'border-accent/50 bg-accent/5' : 'border-zinc-800 bg-zinc-950/40')}>
                 <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(m.metric)}</div>
-                <div className="text-xl font-semibold text-zinc-100">{numero(m.total)}</div>
+                <div className="titulo text-3xl text-zinc-100">{numero(m.total)}</div>
                 <div className="text-[10px] text-zinc-500">mediana {numero(m.mediana)} · {m.posts} posts</div>
               </div>
             ))}
@@ -247,7 +247,7 @@ function Publicaciones({ e, huso }: { e: Estadistica; huso: string | null }) {
         <div className="space-y-1">
           {e.porFormato.map((f) => (
             <div key={f.formato} className="flex items-center gap-2 text-[11px]">
-              <span className="w-24 text-zinc-400">{etiquetaFormato(f.formato)}</span>
+              <span className="w-20 sm:w-24 truncate text-zinc-400">{etiquetaFormato(f.formato)}</span>
               <div className="flex-1 h-2 rounded-full bg-zinc-800 overflow-hidden">
                 <div className="h-full bg-accent/80" style={{ width: `${(f.publicaciones / maxFormato) * 100}%` }} />
               </div>
@@ -272,7 +272,7 @@ function Publicaciones({ e, huso }: { e: Estadistica; huso: string | null }) {
       {e.metricaTop && e.top.length > 0 && (
         <div>
           <h4 className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">Top por {etiquetaMetrica(e.metricaTop)}</h4>
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 sm:gap-2">
             {e.top.map((p) => {
               const v = p.metricas.find((m) => m.metric === e.metricaTop)?.value;
               const img = p.image_url ?? p.media_urls?.[0] ?? null;

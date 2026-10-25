@@ -170,7 +170,12 @@ async function publicado(req: any, marcas: typeof TODAS | string[]) {
 async function envivo(req: any, marcas: typeof TODAS | string[]) {
   const limite = Math.min(Math.max(Number(q(req, 'limite') ?? 25) || 25, 1), 50);
   const cuentas = await cuentasDe(marcas);
-  const tareas = cuentas.flatMap((c) => plataformasEnVivo(c).map((platform) => ({ brand_id: c.brand_id, platform })));
+  // `cuentas=marca:PLATAFORMA,...` limita la lectura a esas cuentas (el tablero lee cada minuto sólo las
+  // activas). Sólo restringe: una cuenta fuera del alcance del operador nunca entra por aquí.
+  const pedidas = q(req, 'cuentas');
+  const soloEstas = pedidas ? new Set(pedidas.split(',').map((x) => x.trim()).filter(Boolean)) : null;
+  const tareas = cuentas.flatMap((c) => plataformasEnVivo(c).map((platform) => ({ brand_id: c.brand_id, platform })))
+    .filter((t) => !soloEstas || soloEstas.has(`${t.brand_id}:${t.platform}`));
   const resultados = await Promise.all(tareas.map(async (t) => {
     try {
       const lector = lectorDe(t.platform)!;

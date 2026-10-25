@@ -63,7 +63,7 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-end gap-3">
         <Campo etiqueta="Desde"><input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="entrada" /></Campo>
         <Campo etiqueta="Hasta (excluido)"><input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="entrada" /></Campo>
         <Campo etiqueta="Plataforma">
@@ -78,7 +78,7 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
             {[...new Set([...formatos, formato].filter(Boolean))].map((f) => <option key={f} value={f}>{etiquetaFormato(f)}</option>)}
           </select>
         </Campo>
-        <button onClick={() => { setRecarga((n) => n + 1); recargarVivo(); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
+        <button onClick={() => { setRecarga((n) => n + 1); recargarVivo(); }} className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
           <RefreshCw className="w-3.5 h-3.5" /> Actualizar
         </button>
       </div>
@@ -98,11 +98,11 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
           {reg.metricas === 'tabla_inexistente' && (
             <Aviso>Métricas: <b>sin medir</b>. SignalLab todavía no escribe instantáneas (content.post_metric_snapshots no existe).</Aviso>
           )}
-          <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
             <Radio className={cn('w-3.5 h-3.5', cargandoVivo ? 'animate-pulse text-amber-400' : 'text-emerald-400')} />
             {cargandoVivo ? 'Leyendo las plataformas…'
-              : vivo ? `En vivo: ${vivo.publicaciones.length} publicaciones recientes leídas de las plataformas (hasta ${vivo.limite} por cuenta). Me gusta y comentarios se releen cada minuto con la pestaña visible; las demás métricas, al ritmo de SignalLab.` : 'Sin lectura en vivo.'}
-            {leidoEn && <span className="ml-auto font-mono text-zinc-600">métricas releídas {new Date(leidoEn).toLocaleTimeString('es')} · cada 60 s</span>}
+              : vivo ? `En vivo: ${vivo.publicaciones.length} publicaciones recientes leídas de las plataformas (hasta ${vivo.limite} por cuenta). Me gusta y comentarios: cada minuto las cuentas que publicaron en los últimos 7 días, las demás cada 10 min (con la pestaña visible). Las demás métricas, al ritmo de SignalLab.` : 'Sin lectura en vivo.'}
+            {leidoEn && <span className="sm:ml-auto text-zinc-600">métricas releídas {new Date(leidoEn).toLocaleTimeString('es')} · cada 60 s</span>}
           </div>
           <Rejilla>
             {reg.publicaciones.map((p) => <Tarjeta key={`${p.via ?? 'carril'}-${p.id}`} p={p} vivo={p.platform_post_id ? porId.get(p.platform_post_id) : undefined}
@@ -125,7 +125,7 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
 }
 
 const Campo = ({ etiqueta, children }: { etiqueta: string; children: React.ReactNode }) => (
-  <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wider text-zinc-500">{etiqueta}{children}</label>
+  <label className="flex flex-col gap-1 min-w-0 text-[10px] uppercase tracking-wider text-zinc-500">{etiqueta}{children}</label>
 );
 
 const Rejilla = ({ children }: { children: React.ReactNode }) => (
@@ -135,7 +135,7 @@ const Rejilla = ({ children }: { children: React.ReactNode }) => (
 function Conteos({ reg, nombre }: { reg: RespPublicado; nombre: (b: string) => string }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-      <div className="text-xs text-zinc-400 mb-2"><b className="text-zinc-100 text-base">{reg.total}</b> publicadas en la ventana</div>
+      <div className="text-xs text-zinc-400 mb-2"><b className="titulo text-accent text-2xl mr-1">{reg.total}</b> publicadas en la ventana</div>
       <div className="flex flex-wrap gap-2">
         {reg.conteos.map((c) => (
           <span key={`${c.brand_id}-${c.platform}-${c.formato}`} className="text-[11px] px-2 py-1 rounded-md bg-zinc-800/80 text-zinc-300">
@@ -172,7 +172,7 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso }: { p: Publicada; vivo?: 
             : leidoEnVivo ? <Chip className="bg-amber-500/10 text-amber-300" >no está en la lectura reciente</Chip> : null}
         </div>
         <div className="text-[11px] text-zinc-500">{fechaHora(p.published_at, huso)}</div>
-        <p className="text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1">{vivo?.texto ?? p.copy_text ?? ''}</p>
+        <p className="texto-editorial text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1">{vivo?.texto ?? p.copy_text ?? ''}</p>
         <PillsDePost id={p.id} platformPostId={p.platform_post_id} metricas={p.metricas}
           sinMedir={p.via === 'manual' || p.via === 'externa' ? `sin lector de métricas (publicación ${p.via})` : 'sin medir'} />
         <div className="flex items-center justify-between text-[10px] font-mono text-zinc-600">
