@@ -9,7 +9,8 @@
  *   4 · un mensaje vacío no es respuesta; dos envíos seguidos al mismo comentario se bloquean;
  *   5 · verificada = la plataforma devuelve el mismo id al leerla;
  *   6 · el handler: comprueba alcance antes de escribir, asienta `requested` ANTES de llamar a la
- *       plataforma, marca `failed` con el error y no nombra ninguna plataforma.
+ *       plataforma (la herramienta elegida por clase: pública o privada), marca `failed` con el error
+ *       y no nombra ninguna plataforma.
  *
  * Sin dependencias. Requiere Node >= 22.18 (type stripping nativo).
  */
@@ -17,6 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   estados, ordenar, objetivoDeRespuesta, mensajeValido, hayEnVuelo, verificada, MINUTOS_EN_VUELO,
+  privadaDisponible, objetivoDePrivada,
 } from '../api/_commentsCore.ts';
 
 let fallos = 0;
@@ -84,7 +86,7 @@ const H = sinComentarios(readFileSync(new URL('../api/comments.ts', import.meta.
 test('6 · handler: alcance antes de escribir; requested antes de la plataforma; failed con el error', () => {
   const alcance = H.indexOf('enAlcance(alcance, c.brand_id)');
   const insert = H.indexOf("sbEscribir<FilaRespuesta>('POST', 'comment_replies'");
-  const llamada = H.indexOf('mcpLeer(p.reply_tool');
+  const llamada = H.indexOf('mcpLeer(herramienta');
   assert.ok(alcance > 0 && insert > alcance, 'se escribe antes de comprobar el alcance');
   assert.ok(llamada > insert, 'se llama a la plataforma antes de asentar la petición');
   assert.ok(/status: 'failed', error/.test(H), 'un fallo de la plataforma no queda asentado');
@@ -98,6 +100,31 @@ test('6b · ninguna plataforma escrita en el handler ni en el núcleo', () => {
   for (const src of [H, N]) {
     assert.ok(!/instagram|facebook|\big_|\bfb_/i.test(src), 'una plataforma escrita en código');
   }
+});
+
+test('7 · privada: una vez, dentro de la ventana, nunca a la marca, y a la persona de ESE comentario', () => {
+  const ahora = Date.parse('2026-10-25T12:00:00Z');
+  const com = { from_brand: false, commented_at: '2026-10-24T12:00:00Z' };
+  assert.equal(privadaDisponible(com, [], 10080, ahora).puede, true);
+  assert.equal(privadaDisponible(com, [], 10080, ahora).hasta, '2026-10-31T12:00:00.000Z');
+  assert.match(privadaDisponible(com, [], null, ahora).motivo, /no tiene respuesta privada/);
+  assert.match(privadaDisponible({ ...com, from_brand: true }, [], 10080, ahora).motivo, /propia marca/);
+  assert.match(privadaDisponible({ ...com, commented_at: '2026-10-10T12:00:00Z' }, [], 10080, ahora).motivo, /ventana/);
+  const priv = (status) => ({ id: 'x', post_comment_id: 1, status, requested_at: '2026-10-25T11:00:00Z', kind: 'privada' });
+  assert.match(privadaDisponible(com, [priv('verified')], 10080, ahora).motivo, /ya tiene/);
+  assert.equal(privadaDisponible(com, [priv('failed')], 10080, ahora).puede, true, 'una fallida bloquea el reintento');
+  assert.equal(privadaDisponible(com, [{ ...priv('verified'), kind: 'publica' }], 10080, ahora).puede, true, 'una pública bloquea la privada');
+  assert.equal(objetivoDePrivada(c(2, { parent_comment_id: 'c1' })), 'c2');
+  assert.equal(hayEnVuelo([priv('requested')], Date.parse('2026-10-25T11:01:00Z'), 'publica'), false, 'una privada en curso bloquea la pública');
+});
+
+test('7b · handler: la privada usa sus herramientas, lee por message_id y la base impide la segunda', () => {
+  assert.ok(/clase === 'privada' \? p\?\.private_reply_tool : p\?\.reply_tool/.test(H));
+  assert.ok(/clase === 'privada' \? p\?\.message_read_tool : p\?\.comment_read_tool/.test(H));
+  assert.ok(/brand_id: c\.brand_id, message_id: idRespuesta/.test(H));
+  assert.ok(/kind: clase/.test(H), 'la petición no registra si es privada');
+  assert.ok(/23505\|duplicate key/.test(H) && /status: 409/.test(H), 'dos envíos a la vez no se frenan');
+  assert.ok(H.indexOf('privadaDisponible(c, previas') < H.indexOf("sbEscribir<FilaRespuesta>('POST', 'comment_replies'"), 'se asienta antes de mirar la ventana');
 });
 
 if (fallos) { console.error(`\n${fallos} fallo(s)`); process.exit(1); }
