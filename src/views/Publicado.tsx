@@ -180,12 +180,14 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso }: { p: Publicada; vivo?: 
           <Chip>{etiquetaPlataforma(p.platform)}</Chip>
           <Chip>{etiquetaFormato(p.formato)}</Chip>
           {p.via === 'manual' ? <Chip className="bg-sky-500/10 text-sky-300">manual</Chip>
+            : p.via === 'externa' ? <Chip className="bg-violet-500/10 text-violet-300">externa</Chip>
+            : p.via === 'sin_canal' ? <Chip className="bg-red-500/10 text-red-300">sin canal</Chip>
             : vivo ? <Chip className="bg-emerald-500/10 text-emerald-300">en vivo</Chip>
             : leidoEnVivo ? <Chip className="bg-amber-500/10 text-amber-300" >no está en la lectura reciente</Chip> : null}
         </div>
         <div className="text-[11px] text-zinc-500">{fechaHora(p.published_at, huso)}</div>
         <p className="text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1">{vivo?.texto ?? p.copy_text ?? ''}</p>
-        <Pills metricas={p.metricas} sinMedir={p.via === 'manual' ? 'sin lector de métricas (publicación manual)' : 'sin medir'} />
+        <Pills metricas={p.metricas} sinMedir={p.via === 'manual' || p.via === 'externa' ? `sin lector de métricas (publicación ${p.via})` : 'sin medir'} />
         <div className="flex items-center justify-between text-[10px] font-mono text-zinc-600">
           <span title="piece_id">{p.piece_id ?? 'sin piece_id'}</span>
           {enlace && <a href={enlace} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline">Ver <ExternalLink className="w-3 h-3" /></a>}

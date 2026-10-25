@@ -143,42 +143,52 @@ export function contar(filas: readonly FilaPublicada[]): Conteo[] {
     a.brand_id.localeCompare(b.brand_id) || a.platform.localeCompare(b.platform) || a.formato.localeCompare(b.formato));
 }
 
-// ── Publicaciones manuales ────────────────────────────────────────────────────
+// ── La vía y el formato de cada fila del libro ────────────────────────────────
 
-/** Un canal de `intel.brand_publish_channels`. Los manuales son los de `publication_path = 'manual'`. */
-export interface Canal { brand_id: string; platform_key: string; publication_path: string | null }
-export interface FranjaPublicada { id: string; brand_id: string; platform_key: string; published_at: string | null; piece_id: string | null }
-export interface PiezaManual { id: string; post_url: string | null; format: string | null; copy: string | null; imagen: string | null }
+/**
+ * `public.scheduled_posts` es EL LIBRO de toda publicación (`unrlvl-iid-functions` #479, 2026-10-25): el
+ * carril asienta lo que publica SocialLab, `blog-promoter` lo externo y la bandeja manual del
+ * Orchestrator lo publicado a mano. El tablero lee sólo el libro: una segunda fuente (las franjas)
+ * duplicaba cada publicación manual (ICR C-09).
+ *
+ * La VÍA no está en la fila: sale del canal (`intel.brand_publish_channels.publication_path`), cruzado
+ * por marca y plataforma. La plataforma del canal es `config.provider_platform`, o su clave en
+ * mayúsculas si no la declara: la misma regla con la que el libro asienta (#479).
+ */
+export interface Canal { brand_id: string; platform_key: string; publication_path: string | null; provider?: string | null }
 
-/** La vía por la que salió una publicación: el carril (drenaje → `api/publish.ts`) o una persona a mano. */
-export type Via = 'carril' | 'manual';
+/** La vía por la que salió una publicación. `sin_canal` se dice, no se adivina. */
+export type Via = 'carril' | 'manual' | 'externa' | 'sin_canal';
 
-export interface PublicacionManual {
-  id: string; brand_id: string; platform: string; media_type: string | null; formato: string;
-  platform_post_id: null; published_at: string; copy_text: string | null; image_url: string | null;
-  media_urls: null; piece_id: string | null; enlace: string | null; via: 'manual';
+const VIA_POR_RUTA: Readonly<Record<string, Via>> = { drained: 'carril', manual: 'manual', external: 'externa' };
+
+export const plataformaDelCanal = (c: Canal): string => String(c.provider || c.platform_key || '').toUpperCase();
+
+/** Índice (marca, plataforma) → vía. */
+export function viasPorCanal(canales: readonly Canal[]): Map<string, Via> {
+  const m = new Map<string, Via>();
+  for (const c of canales) m.set(`${c.brand_id}\u0000${plataformaDelCanal(c)}`, VIA_POR_RUTA[String(c.publication_path ?? '')] ?? 'sin_canal');
+  return m;
+}
+
+export function viaDe(vias: Map<string, Via>, brandId: string, platform: string): Via {
+  return vias.get(`${brandId}\u0000${String(platform ?? '').toUpperCase()}`) ?? 'sin_canal';
 }
 
 /**
- * Lo publicado a mano: las franjas `published` de un canal cuyo `publication_path` es `manual`, con el
- * enlace que la persona dejó como prueba (`content_pieces.post_url`). Qué canal es manual es DATO; aquí
- * no se nombra ninguna plataforma. Una franja de un canal que no es manual no entra: ya está en
- * `scheduled_posts` y saldría dos veces.
+ * El formato de una fila. `media_type` NULL = una imagen sola es el contrato de las filas que asienta
+ * el CARRIL (`content-scheduler`); una fila manual o externa con NULL no es «una imagen»: su formato es
+ * el de la pieza (`content_pieces.format`: post, artículo…), y si no hay pieza, se queda vacío.
  */
-export function publicacionesManuales(canales: readonly Canal[], franjas: readonly FranjaPublicada[], piezas: readonly PiezaManual[]): PublicacionManual[] {
-  const manual = new Set(canales.filter((c) => c.publication_path === 'manual').map((c) => `${c.brand_id}\u0000${c.platform_key}`));
-  const porPieza = new Map(piezas.map((p) => [p.id, p]));
-  return franjas
-    .filter((f) => f.published_at && manual.has(`${f.brand_id}\u0000${f.platform_key}`))
-    .map((f) => {
-      const p = f.piece_id ? porPieza.get(f.piece_id) : undefined;
-      return {
-        id: f.id, brand_id: f.brand_id, platform: String(f.platform_key).toUpperCase(),
-        media_type: p?.format ?? null, formato: p?.format ? formatoDe(p.format) : '',
-        platform_post_id: null, published_at: f.published_at!, copy_text: p?.copy ?? null, image_url: p?.imagen ?? null,
-        media_urls: null, piece_id: f.piece_id, enlace: p?.post_url ?? null, via: 'manual' as const,
-      };
-    });
+export function formatoDeFila(mediaType: string | null | undefined, via: Via, formatoPieza: string | null | undefined): string {
+  if (via === 'carril') return formatoDe(mediaType);
+  if (mediaType && String(mediaType).trim()) return formatoDe(mediaType);
+  return formatoPieza && String(formatoPieza).trim() ? String(formatoPieza).trim().toUpperCase() : '';
+}
+
+/** El enlace de una fila: el `platform_post_id` cuando ya es una URL (manual, externa); si no, null. */
+export function enlaceDeId(platformPostId: string | null | undefined): string | null {
+  return platformPostId && /^https?:\/\//i.test(platformPostId) ? platformPostId : null;
 }
 
 // ── Lectura en vivo, por plataforma ───────────────────────────────────────────
