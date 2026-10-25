@@ -278,6 +278,12 @@ export interface PublicacionEnVivo {
   texto: string | null;
   publicado_en: string | null;
   formato: string;
+  /**
+   * Los contadores que la plataforma devuelve EN LA MISMA LECTURA del listado (sin pedir insights):
+   * me gusta y comentarios. Se nombran como las métricas de SignalLab (`likes`, `comments`) para que la
+   * pill sea la misma y sólo cambie la fuente. Un contador que la plataforma no devuelve no aparece.
+   */
+  contadores: { metric: string; value: number }[];
 }
 
 interface Lector {
@@ -289,6 +295,14 @@ interface Lector {
 }
 
 const txt = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const resumen = (v: unknown): number | null =>
+  num((v as { summary?: { total_count?: unknown } } | null)?.summary?.total_count);
+
+/** Arma la lista de contadores; los que la plataforma no devolvió se omiten (nunca un cero inventado). */
+function contadores(pares: Record<string, number | null>): { metric: string; value: number }[] {
+  return Object.entries(pares).filter(([, v]) => v !== null).map(([metric, value]) => ({ metric, value: value as number }));
+}
 
 /**
  * Cómo se lee cada PLATAFORMA en vivo. Las claves son los valores de `scheduled_posts.platform`.
@@ -312,6 +326,7 @@ export const LECTORES_EN_VIVO: Readonly<Record<string, Lector>> = {
         texto: txt(i.caption),
         publicado_en: txt(i.timestamp),
         formato: tipo === 'CAROUSEL_ALBUM' ? 'CAROUSEL' : tipo === 'IMAGE' ? FORMATO_SIN_TIPO : formatoDe(tipo),
+        contadores: contadores({ likes: num(i.like_count), comments: num(i.comments_count) }),
       };
     },
   },
@@ -330,6 +345,7 @@ export const LECTORES_EN_VIVO: Readonly<Record<string, Lector>> = {
         publicado_en: txt(i.created_time),
         // El feed de Facebook no declara el formato; se toma el del registro al cruzar.
         formato: '',
+        contadores: contadores({ likes: resumen(i.likes), comments: resumen(i.comments) }),
       };
     },
   },

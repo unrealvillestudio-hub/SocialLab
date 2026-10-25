@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle } from 'lucide-react';
 import { entrar, ops, ErrorApi, type Catalogo, type Sesion } from './api';
 import { Aviso, Cargando, cn } from './ui/components';
@@ -7,6 +7,7 @@ import Calendario from './views/Calendario';
 import Estadisticas from './views/Estadisticas';
 import Comentarios from './views/Comentarios';
 import Hoy from './views/Hoy';
+import { AvisoComentarios, ProveedorPulso } from './ui/Pulso';
 
 type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'estadisticas' | 'calendario';
 const PESTANAS: { id: Pestana; etiqueta: string; icono: React.ElementType }[] = [
@@ -62,6 +63,9 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
   const [catalogo, setCatalogo] = useState<Catalogo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [marca, setMarca] = useState('');
+  /** La publicación cuya bandeja se abrió desde su pill o desde el aviso; `null` = todas. */
+  const [postComentarios, setPostComentarios] = useState<string | null>(null);
+  const atender = useCallback((id: string | null) => { setPostComentarios(id); setPestana('comentarios'); }, []);
 
   useEffect(() => {
     ops<Catalogo>(sesion.session_token, 'catalogo')
@@ -82,11 +86,11 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
         {error && <Aviso tono="error">{error}</Aviso>}
         {!catalogo && !error && <Cargando />}
         {catalogo && (
-          <>
+          <ProveedorPulso token={sesion.session_token} marca={marca} onAtender={atender}>
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
                 {PESTANAS.map((p) => (
-                  <button key={p.id} onClick={() => setPestana(p.id)}
+                  <button key={p.id} onClick={() => { setPestana(p.id); if (p.id === 'comentarios') setPostComentarios(null); }}
                     className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
                       pestana === p.id ? 'bg-accent text-black' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800')}>
                     <p.icono className="w-4 h-4" />{p.etiqueta}
@@ -99,12 +103,14 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
               </select>
             </div>
             {catalogo.marcas.length === 0 && <Aviso>No hay marcas con cuenta conectada en tu alcance.</Aviso>}
+            <AvisoComentarios marcas={catalogo.marcas} />
             {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
             {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
-            {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
+            {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} marcas={catalogo.marcas}
+              post={postComentarios} onQuitarFiltro={() => setPostComentarios(null)} />}
             {pestana === 'estadisticas' && <Estadisticas token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
             {pestana === 'calendario' && <Calendario token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
-          </>
+          </ProveedorPulso>
         )}
       </main>
     </div>

@@ -41,7 +41,11 @@ function espera(desde: string, ahora = Date.now()): string {
   return `${Math.round(min / 1440)} d`;
 }
 
-export default function Comentarios({ token, marca, marcas }: { token: string; marca: string; marcas: Marca[] }) {
+export default function Comentarios({ token, marca, marcas, post = null, onQuitarFiltro }: {
+  token: string; marca: string; marcas: Marca[];
+  /** Abierta desde la pill de comentarios de una publicación: sólo los de ese post. */
+  post?: string | null; onQuitarFiltro?: () => void;
+}) {
   const [dias, setDias] = useState<(typeof RANGOS)[number]>(7);
   const [data, setData] = useState<RespComentarios | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,8 +77,9 @@ export default function Comentarios({ token, marca, marcas }: { token: string; m
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
   const visibles = useMemo(
-    () => (data?.comentarios ?? []).filter((c) => verDeLaMarca || c.estado !== 'de_la_marca'),
-    [data, verDeLaMarca]);
+    () => (data?.comentarios ?? []).filter((c) => (verDeLaMarca || c.estado !== 'de_la_marca') && (!post || c.scheduled_post_id === post)),
+    [data, verDeLaMarca, post]);
+  const delPost = post ? posts.get(post) : undefined;
 
   return (
     <div className="space-y-4">
@@ -94,6 +99,12 @@ export default function Comentarios({ token, marca, marcas }: { token: string; m
         </button>
       </div>
 
+      {post && (
+        <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-xs text-zinc-300">
+          <span className="truncate">Sólo los comentarios de esta publicación{delPost?.copy_text ? `: «${delPost.copy_text.slice(0, 80)}…»` : ''}</span>
+          <button onClick={onQuitarFiltro} className="ml-auto shrink-0 underline text-accent">Ver todos</button>
+        </div>
+      )}
       {error && <Aviso tono="error">No se pudieron leer los comentarios: {error}</Aviso>}
       {!data && !error && <Cargando />}
       {data && (
