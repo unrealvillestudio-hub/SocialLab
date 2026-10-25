@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, RefreshCw, Radio } from 'lucide-react';
 import { ops, type Marca, type RespPublicado, type RespEnVivo, type EnVivo, type Publicada } from '../api';
-import { Aviso, Cargando, Chip, Metricas, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
+import { Aviso, Cargando, Chip, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
+import { Pills } from '../ui/Pills';
+
+/** Cada cuánto se vuelve a leer el registro y las métricas (sólo base: barato). */
+const REFRESCO_REGISTRO_MS = 60_000;
+/** Cada cuánto se vuelve a leer la plataforma en vivo (gasta llamadas a Graph: más espaciado). */
+const REFRESCO_EN_VIVO_MS = 5 * 60_000;
 
 const DIA = 86_400_000;
 const isoDia = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -24,27 +30,40 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
   const [cargando, setCargando] = useState(false);
   const [cargandoVivo, setCargandoVivo] = useState(false);
   const [recarga, setRecarga] = useState(0);
+  const [tickRegistro, setTickRegistro] = useState(0);
+  const [tickVivo, setTickVivo] = useState(0);
+  const [leidoEn, setLeidoEn] = useState<number | null>(null);
+
+  // Refresco automático: el registro (con las métricas de SignalLab) cada minuto; la plataforma, cada 5.
+  // Una pill sólo celebra cuando su valor cambia entre dos lecturas.
+  useEffect(() => {
+    const a = setInterval(() => setTickRegistro((n) => n + 1), REFRESCO_REGISTRO_MS);
+    const b = setInterval(() => setTickVivo((n) => n + 1), REFRESCO_EN_VIVO_MS);
+    return () => { clearInterval(a); clearInterval(b); };
+  }, []);
 
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
 
   useEffect(() => {
     let vivoAqui = true;
-    setCargando(true); setError(null);
+    setCargando(true);
     ops<RespPublicado>(token, 'publicado', {
       marca: marca || undefined, plataforma: plataforma || undefined, formato: formato || undefined,
       desde: new Date(`${desde}T00:00:00`).toISOString(), hasta: new Date(`${hasta}T00:00:00`).toISOString(),
-    }).then((r) => vivoAqui && setReg(r)).catch((e) => vivoAqui && setError(e.message)).finally(() => vivoAqui && setCargando(false));
+    }).then((r) => { if (vivoAqui) { setReg(r); setError(null); setLeidoEn(Date.now()); } })
+      .catch((e) => vivoAqui && setError(e.message)).finally(() => vivoAqui && setCargando(false));
     return () => { vivoAqui = false; };
-  }, [token, marca, plataforma, formato, desde, hasta, recarga]);
+  }, [token, marca, plataforma, formato, desde, hasta, recarga, tickRegistro]);
 
   useEffect(() => {
     let vivoAqui = true;
-    setCargandoVivo(true); setErrorVivo(null);
+    setCargandoVivo(true);
     ops<RespEnVivo>(token, 'envivo', { marca: marca || undefined, limite: '50' })
-      .then((r) => vivoAqui && setVivo(r)).catch((e) => vivoAqui && setErrorVivo(e.message)).finally(() => vivoAqui && setCargandoVivo(false));
+      .then((r) => { if (vivoAqui) { setVivo(r); setErrorVivo(null); } })
+      .catch((e) => vivoAqui && setErrorVivo(e.message)).finally(() => vivoAqui && setCargandoVivo(false));
     return () => { vivoAqui = false; };
-  }, [token, marca, recarga]);
+  }, [token, marca, recarga, tickVivo]);
 
   const porId = useMemo(() => new Map((vivo?.publicaciones ?? []).map((v) => [v.platform_post_id, v])), [vivo]);
   const fueraDelCarril = useMemo(() => {
@@ -97,10 +116,11 @@ export default function Publicado({ token, marca, marcas }: { token: string; mar
           <div className="flex items-center gap-2 text-[11px] text-zinc-500">
             <Radio className={cn('w-3.5 h-3.5', cargandoVivo ? 'animate-pulse text-amber-400' : 'text-emerald-400')} />
             {cargandoVivo ? 'Leyendo las plataformas…'
-              : vivo ? `En vivo: ${vivo.publicaciones.length} publicaciones recientes leídas de las plataformas (hasta ${vivo.limite} por cuenta).` : 'Sin lectura en vivo.'}
+              : vivo ? `En vivo: ${vivo.publicaciones.length} publicaciones recientes leídas de las plataformas (hasta ${vivo.limite} por cuenta; se relee cada 5 min).` : 'Sin lectura en vivo.'}
+            {leidoEn && <span className="ml-auto font-mono text-zinc-600">métricas releídas {new Date(leidoEn).toLocaleTimeString('es')} · cada 60 s</span>}
           </div>
           <Rejilla>
-            {reg.publicaciones.map((p) => <Tarjeta key={p.id} p={p} vivo={p.platform_post_id ? porId.get(p.platform_post_id) : undefined}
+            {reg.publicaciones.map((p) => <Tarjeta key={`${p.via ?? 'carril'}-${p.id}`} p={p} vivo={p.platform_post_id ? porId.get(p.platform_post_id) : undefined}
               leidoEnVivo={!!vivo && vivo.lecturas.some((l) => l.brand_id === p.brand_id && l.platform === p.platform && !l.error)}
               nombre={nombre(p.brand_id)} huso={huso(p.brand_id)} />)}
           </Rejilla>
@@ -159,12 +179,13 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso }: { p: Publicada; vivo?: 
           <Chip className="text-zinc-200">{nombre}</Chip>
           <Chip>{etiquetaPlataforma(p.platform)}</Chip>
           <Chip>{etiquetaFormato(p.formato)}</Chip>
-          {vivo ? <Chip className="bg-emerald-500/10 text-emerald-300">en vivo</Chip>
+          {p.via === 'manual' ? <Chip className="bg-sky-500/10 text-sky-300">manual</Chip>
+            : vivo ? <Chip className="bg-emerald-500/10 text-emerald-300">en vivo</Chip>
             : leidoEnVivo ? <Chip className="bg-amber-500/10 text-amber-300" >no está en la lectura reciente</Chip> : null}
         </div>
         <div className="text-[11px] text-zinc-500">{fechaHora(p.published_at, huso)}</div>
         <p className="text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1">{vivo?.texto ?? p.copy_text ?? ''}</p>
-        <Metricas metricas={p.metricas} />
+        <Pills metricas={p.metricas} sinMedir={p.via === 'manual' ? 'sin lector de métricas (publicación manual)' : 'sin medir'} />
         <div className="flex items-center justify-between text-[10px] font-mono text-zinc-600">
           <span title="piece_id">{p.piece_id ?? 'sin piece_id'}</span>
           {enlace && <a href={enlace} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-accent hover:underline">Ver <ExternalLink className="w-3 h-3" /></a>}

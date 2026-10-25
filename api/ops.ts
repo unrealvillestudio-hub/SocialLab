@@ -3,8 +3,10 @@
  *
  * Vistas:
  *   catalogo    las marcas del alcance del operador, con sus plataformas leíbles en vivo
- *   publicado   lo publicado (`scheduled_posts`, status='published') en la ventana, con conteos
- *               por marca/plataforma/formato y las métricas de SignalLab cuando existan
+ *   publicado   lo publicado en la ventana, por las dos vías: el carril (`scheduled_posts`,
+ *               status='published') y a mano (franjas `published` de los canales con
+ *               `publication_path = 'manual'`, con su enlace). Conteos por marca/plataforma/formato
+ *               y las métricas de SignalLab cuando existan
  *   envivo      las publicaciones recientes leídas DESDE LA PLATAFORMA (MCP de Meta), cruzadas con
  *               el registro por `platform_post_id`
  *   calendario  franjas (`intel.brand_publish_slots`) y filas de `scheduled_posts` en la ventana
@@ -15,7 +17,8 @@
  */
 import {
   ventana, contar, formatoDe, ultimasMetricas, marcasConsultadas, lectorDe, normalizarRespuesta,
-  LECTORES_EN_VIVO, TODAS, type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo,
+  LECTORES_EN_VIVO, TODAS, publicacionesManuales, type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo,
+  type Canal, type FranjaPublicada, type PiezaManual, type Via,
 } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, esTablaInexistente, mcpLeer, LecturaFallida } from './_opsShared.js';
 
@@ -104,31 +107,59 @@ interface Publicada {
   published_at: string; copy_text: string | null; image_url: string | null; media_urls: string[] | null; piece_id: string | null;
 }
 
+/** Lo publicado a mano en la ventana: franjas `published` de canales manuales, con su pieza. */
+async function manualesDe(v: { desde: string; hasta: string }, marcas: typeof TODAS | string[]) {
+  const [canales, franjas] = await Promise.all([
+    sbGet<Canal>(`brand_publish_channels?publication_path=eq.manual&select=brand_id,platform_key,publication_path${filtroMarcas(marcas)}`, 'intel'),
+    sbGet<FranjaPublicada>(`brand_publish_slots?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}`
+      + `&published_at=lt.${encodeURIComponent(v.hasta)}${filtroMarcas(marcas)}`
+      + `&select=id,brand_id,platform_key,published_at,piece_id&order=published_at.desc&limit=${MAX_FILAS}`, 'intel'),
+  ]);
+  const ids = [...new Set(franjas.map((f) => f.piece_id).filter((x): x is string => !!x))];
+  const piezas: PiezaManual[] = [];
+  for (const t of trozos(ids, TROZO)) {
+    piezas.push(...await sbGet<PiezaManual>(
+      `content_pieces?id=${enLista(t)}&select=id,post_url,format,copy:assets->copy->>raw,imagen:assets->image->>url`, 'content'));
+  }
+  return publicacionesManuales(canales, franjas, piezas);
+}
+
 async function publicado(req: any, marcas: typeof TODAS | string[]) {
   const v = ventana(q(req, 'desde'), q(req, 'hasta'));
   const plataforma = q(req, 'plataforma');
   const formato = q(req, 'formato');
-  const filas = await sbGet<Publicada>(
-    `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}&published_at=lt.${encodeURIComponent(v.hasta)}`
-    + filtroMarcas(marcas)
-    + (plataforma ? `&platform=eq.${encodeURIComponent(plataforma)}` : '')
-    + `&select=id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id`
-    + `&order=published_at.desc&limit=${MAX_FILAS + 1}`);
+  const [filas, manuales] = await Promise.all([
+    sbGet<Publicada>(
+      `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}&published_at=lt.${encodeURIComponent(v.hasta)}`
+      + filtroMarcas(marcas)
+      + (plataforma ? `&platform=eq.${encodeURIComponent(plataforma)}` : '')
+      + `&select=id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id`
+      + `&order=published_at.desc&limit=${MAX_FILAS + 1}`),
+    manualesDe(v, marcas),
+  ]);
   const truncado = filas.length > MAX_FILAS;
-  const visibles = (truncado ? filas.slice(0, MAX_FILAS) : filas).filter((f) => !formato || formatoDe(f.media_type) === formato);
-  const m = await metricasDe(visibles.map((f) => f.id));
-  return {
-    ventana: v,
-    truncado,
-    total: visibles.length,
-    conteos: contar(visibles),
-    metricas: m.estado,
-    publicaciones: visibles.map((f) => ({
+  const delCarril = (truncado ? filas.slice(0, MAX_FILAS) : filas)
+    .filter((f) => !formato || formatoDe(f.media_type) === formato);
+  const aMano = manuales.filter((f) => (!plataforma || f.platform === plataforma) && (!formato || f.formato === formato));
+  const m = await metricasDe(delCarril.map((f) => f.id));
+  const publicaciones = [
+    ...delCarril.map((f) => ({
       ...f,
       formato: formatoDe(f.media_type),
+      via: 'carril' as Via,
       enlace: f.platform_post_id && ENLACE_POR_PLATAFORMA[f.platform] ? ENLACE_POR_PLATAFORMA[f.platform](f.platform_post_id) : null,
       metricas: m.porPost.get(f.id) ?? [],
     })),
+    // Una plataforma manual no tiene lector de métricas: sus tarjetas dicen «sin lector», nunca cero.
+    ...aMano.map((f) => ({ ...f, metricas: [] as MetricaLeida[] })),
+  ].sort((a, b) => b.published_at.localeCompare(a.published_at));
+  return {
+    ventana: v,
+    truncado,
+    total: publicaciones.length,
+    conteos: contar(publicaciones),
+    metricas: m.estado,
+    publicaciones,
   };
 }
 

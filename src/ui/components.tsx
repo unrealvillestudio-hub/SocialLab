@@ -7,7 +7,9 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /** Etiqueta de un formato. Un valor sin etiqueta se muestra tal cual: un formato nuevo no se esconde. */
-const ETIQUETA_FORMATO: Record<string, string> = { SINGLE_IMAGE: 'Una imagen', CAROUSEL: 'Carrusel', VIDEO: 'Video', REELS: 'Reel' };
+const ETIQUETA_FORMATO: Record<string, string> = {
+  SINGLE_IMAGE: 'Una imagen', CAROUSEL: 'Carrusel', VIDEO: 'Video', REELS: 'Reel', POST: 'Post', ARTICLE: 'Artículo',
+};
 export const etiquetaFormato = (f: string) => ETIQUETA_FORMATO[f] ?? (f || 'sin formato');
 export const etiquetaPlataforma = (p: string) => (p ? p.charAt(0) + p.slice(1).toLowerCase() : p);
 
@@ -37,13 +39,3 @@ export const Aviso = ({ children, tono = 'info' }: { children: React.ReactNode; 
 );
 
 export const Cargando = () => <div className="text-xs text-zinc-500 animate-pulse">Cargando…</div>;
-
-/** Una métrica que no existe se dice «sin medir». Nunca se pinta un cero que nadie midió. */
-export const Metricas = ({ metricas }: { metricas: { metric: string; value: number }[] }) =>
-  metricas.length === 0
-    ? <span className="text-[10px] font-mono text-zinc-600">sin medir</span>
-    : (
-      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-zinc-400">
-        {metricas.map((m) => <span key={m.metric}>{m.metric} <b className="text-zinc-200">{m.value.toLocaleString('en-US')}</b></span>)}
-      </div>
-    );

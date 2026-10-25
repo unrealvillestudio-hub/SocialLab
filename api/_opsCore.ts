@@ -125,14 +125,15 @@ export function formatoDe(mediaType: string | null | undefined): string {
 
 // ── Conteos ───────────────────────────────────────────────────────────────────
 
-export interface FilaPublicada { brand_id: string; platform: string; media_type: string | null }
+export interface FilaPublicada { brand_id: string; platform: string; media_type: string | null; formato?: string }
 export interface Conteo { brand_id: string; platform: string; formato: string; total: number }
 
 /** Conteo por (marca, plataforma, formato), ordenado. Es lo que se compara con el `count(*)` directo. */
 export function contar(filas: readonly FilaPublicada[]): Conteo[] {
   const m = new Map<string, Conteo>();
   for (const f of filas) {
-    const formato = formatoDe(f.media_type);
+    // Una fila que ya trae su formato (una publicación manual) lo conserva; si no, sale de `media_type`.
+    const formato = f.formato ?? formatoDe(f.media_type);
     const k = `${f.brand_id}\u0000${f.platform}\u0000${formato}`;
     const c = m.get(k) ?? { brand_id: f.brand_id, platform: f.platform, formato, total: 0 };
     c.total += 1;
@@ -140,6 +141,44 @@ export function contar(filas: readonly FilaPublicada[]): Conteo[] {
   }
   return [...m.values()].sort((a, b) =>
     a.brand_id.localeCompare(b.brand_id) || a.platform.localeCompare(b.platform) || a.formato.localeCompare(b.formato));
+}
+
+// ── Publicaciones manuales ────────────────────────────────────────────────────
+
+/** Un canal de `intel.brand_publish_channels`. Los manuales son los de `publication_path = 'manual'`. */
+export interface Canal { brand_id: string; platform_key: string; publication_path: string | null }
+export interface FranjaPublicada { id: string; brand_id: string; platform_key: string; published_at: string | null; piece_id: string | null }
+export interface PiezaManual { id: string; post_url: string | null; format: string | null; copy: string | null; imagen: string | null }
+
+/** La vía por la que salió una publicación: el carril (drenaje → `api/publish.ts`) o una persona a mano. */
+export type Via = 'carril' | 'manual';
+
+export interface PublicacionManual {
+  id: string; brand_id: string; platform: string; media_type: string | null; formato: string;
+  platform_post_id: null; published_at: string; copy_text: string | null; image_url: string | null;
+  media_urls: null; piece_id: string | null; enlace: string | null; via: 'manual';
+}
+
+/**
+ * Lo publicado a mano: las franjas `published` de un canal cuyo `publication_path` es `manual`, con el
+ * enlace que la persona dejó como prueba (`content_pieces.post_url`). Qué canal es manual es DATO; aquí
+ * no se nombra ninguna plataforma. Una franja de un canal que no es manual no entra: ya está en
+ * `scheduled_posts` y saldría dos veces.
+ */
+export function publicacionesManuales(canales: readonly Canal[], franjas: readonly FranjaPublicada[], piezas: readonly PiezaManual[]): PublicacionManual[] {
+  const manual = new Set(canales.filter((c) => c.publication_path === 'manual').map((c) => `${c.brand_id}\u0000${c.platform_key}`));
+  const porPieza = new Map(piezas.map((p) => [p.id, p]));
+  return franjas
+    .filter((f) => f.published_at && manual.has(`${f.brand_id}\u0000${f.platform_key}`))
+    .map((f) => {
+      const p = f.piece_id ? porPieza.get(f.piece_id) : undefined;
+      return {
+        id: f.id, brand_id: f.brand_id, platform: String(f.platform_key).toUpperCase(),
+        media_type: p?.format ?? null, formato: p?.format ? formatoDe(p.format) : '',
+        platform_post_id: null, published_at: f.published_at!, copy_text: p?.copy ?? null, image_url: p?.imagen ?? null,
+        media_urls: null, piece_id: f.piece_id, enlace: p?.post_url ?? null, via: 'manual' as const,
+      };
+    });
 }
 
 // ── Lectura en vivo, por plataforma ───────────────────────────────────────────
