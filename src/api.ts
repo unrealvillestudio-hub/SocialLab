@@ -42,7 +42,7 @@ export interface Publicada {
   platform_post_id: string | null; published_at: string; copy_text: string | null; image_url: string | null;
   media_urls: string[] | null; piece_id: string | null; enlace?: string | null; metricas: Metrica[];
   /** La vía por la que salió, según su canal: el carril, una persona a mano o un publicador externo (blog). */
-  via?: 'carril' | 'manual' | 'externa' | 'sin_canal';
+  via?: 'carril' | 'manual' | 'externa' | 'detectada' | 'sin_canal';
 }
 export interface RespPublicado {
   ventana: { desde: string; hasta: string }; truncado: boolean; total: number; conteos: Conteo[];
@@ -70,3 +70,18 @@ export interface FilaCalendario {
 export interface RespCalendario { ventana: { desde: string; hasta: string }; franjas: Franja[]; publicaciones: FilaCalendario[] }
 
 export interface RespAhora { minutos: number; estado: 'sin_medir' | 'sin_orden'; motivo: string; publicaciones: Publicada[] }
+
+export interface ResumenMetrica { metric: string; total: number; mediana: number; posts: number }
+export interface Estadistica {
+  brand_id: string; platform: string; publicaciones: number; medidas: number;
+  metricas: ResumenMetrica[];
+  porFormato: { formato: string; publicaciones: number }[];
+  metricaTop: string | null;
+  top: Publicada[];
+  porDia: { dia: string; publicaciones: number }[];
+}
+export interface RespEstadisticas {
+  ventana: { desde: string; hasta: string }; truncado: boolean; metricas: 'medidas' | 'tabla_inexistente';
+  estadisticas: Estadistica[];
+  cuenta: { estado: string; motivo: string };
+}

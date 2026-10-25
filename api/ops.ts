@@ -11,13 +11,14 @@
  *               el registro por `platform_post_id`
  *   calendario  franjas (`intel.brand_publish_slots`) y filas de `scheduled_posts` en la ventana
  *   ahora       «happening now»: sin medir mientras SignalLab no escriba instantáneas
+ *   estadisticas resumen por marca y plataforma: totales, medianas, formatos y top de la ventana
  *
  * Autenticación: `Authorization: Bearer <session_token de iid-inbound>`. Ver `_opsShared.ts`.
  * No escribe nada: ni en la base ni en las plataformas.
  */
 import {
   ventana, contar, formatoDe, ultimasMetricas, marcasConsultadas, lectorDe, normalizarRespuesta,
-  LECTORES_EN_VIVO, TODAS, viasPorCanal, viaDe, formatoDeFila, enlaceDeId,
+  LECTORES_EN_VIVO, TODAS, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas,
   type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo, type Canal, type Via,
 } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, esTablaInexistente, mcpLeer, LecturaFallida } from './_opsShared.js';
@@ -105,7 +106,13 @@ async function metricasDe(ids: string[]): Promise<{ estado: EstadoMetricas; porP
 interface Publicada {
   id: string; brand_id: string; platform: string; media_type: string | null; platform_post_id: string | null;
   published_at: string; copy_text: string | null; image_url: string | null; media_urls: string[] | null; piece_id: string | null;
+  source_lab?: string | null;
 }
+
+/** Las columnas del libro que lee el tablero. */
+const COLUMNAS_LIBRO = 'id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id,source_lab';
+/** Las vías que tienen lector de métricas (SignalLab mide lo que está en el libro con `platform_post_id` de Meta). */
+const CON_METRICAS: readonly Via[] = ['carril', 'detectada'];
 
 /**
  * La vía y el formato de cada fila del libro. La vía sale del canal; el formato, de `media_type` en el
@@ -115,8 +122,8 @@ async function clasificar<T extends Publicada>(filas: T[], marcas: typeof TODAS 
   const canales = await sbGet<Canal>(
     `brand_publish_channels?select=brand_id,platform_key,publication_path,provider:config->>provider_platform${filtroMarcas(marcas)}`, 'intel');
   const vias = viasPorCanal(canales);
-  const conVia = filas.map((f) => ({ f, via: viaDe(vias, f.brand_id, f.platform) }));
-  const ids = [...new Set(conVia.filter((x) => x.via !== 'carril' && !x.f.media_type && x.f.piece_id).map((x) => x.f.piece_id as string))];
+  const conVia = filas.map((f) => ({ f, via: viaDe(vias, f.brand_id, f.platform, f.source_lab) }));
+  const ids = [...new Set(conVia.filter((x) => !CON_METRICAS.includes(x.via) && !x.f.media_type && x.f.piece_id).map((x) => x.f.piece_id as string))];
   const formatos = new Map<string, string | null>();
   for (const t of trozos(ids, TROZO)) {
     for (const p of await sbGet<{ id: string; format: string | null }>(`content_pieces?id=${enLista(t)}&select=id,format`, 'content')) {
@@ -140,13 +147,13 @@ async function publicado(req: any, marcas: typeof TODAS | string[]) {
     `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}&published_at=lt.${encodeURIComponent(v.hasta)}`
     + filtroMarcas(marcas)
     + (plataforma ? `&platform=eq.${encodeURIComponent(plataforma)}` : '')
-    + `&select=id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id`
+    + `&select=${COLUMNAS_LIBRO}`
     + `&order=published_at.desc&limit=${MAX_FILAS + 1}`);
   const truncado = filas.length > MAX_FILAS;
   const clasificadas = (await clasificar(truncado ? filas.slice(0, MAX_FILAS) : filas, marcas))
     .filter((f) => !formato || f.formato === formato);
   // Sólo el carril tiene lector de métricas hoy; una fila manual o externa dice «sin lector», nunca cero.
-  const m = await metricasDe(clasificadas.filter((f) => f.via === 'carril').map((f) => f.id));
+  const m = await metricasDe(clasificadas.filter((f) => CON_METRICAS.includes(f.via)).map((f) => f.id));
   const publicaciones = clasificadas.map((f) => ({ ...f, metricas: m.porPost.get(f.id) ?? ([] as MetricaLeida[]) }));
   return {
     ventana: v,
@@ -225,9 +232,9 @@ async function ahoraMismo(req: any, marcas: typeof TODAS | string[]) {
   const desde = new Date(Date.now() - minutos * 60_000).toISOString();
   const filas = await sbGet<Publicada>(
     `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(desde)}${filtroMarcas(marcas)}`
-    + `&select=id,brand_id,platform,media_type,platform_post_id,published_at,copy_text,image_url,media_urls,piece_id&order=published_at.desc`);
+    + `&select=${COLUMNAS_LIBRO}&order=published_at.desc`);
   const clasificadas = await clasificar(filas, marcas);
-  const m = await metricasDe(clasificadas.filter((f) => f.via === 'carril').map((f) => f.id));
+  const m = await metricasDe(clasificadas.filter((f) => CON_METRICAS.includes(f.via)).map((f) => f.id));
   const conMedida = filas.filter((f) => (m.porPost.get(f.id) ?? []).length > 0);
   return {
     minutos,
@@ -245,8 +252,36 @@ async function ahoraMismo(req: any, marcas: typeof TODAS | string[]) {
 
 // ── handler ───────────────────────────────────────────────────────────────────
 
+// ── estadisticas ──────────────────────────────────────────────────────────────
+
+/**
+ * Resumen por marca y plataforma de lo publicado en la ventana (30 días por defecto), con la última
+ * lectura de SignalLab de cada post. Lo que es de la CUENTA (seguidores, alcance diario, visitas al
+ * perfil) todavía no lo escribe nadie: va en `cuenta` como «pendiente», nunca como cero.
+ */
+async function estadisticasVista(req: any, marcas: typeof TODAS | string[]) {
+  const ahora = Date.now();
+  const v = ventana(q(req, 'desde') ?? new Date(ahora - 30 * 86_400_000).toISOString(), q(req, 'hasta'), ahora);
+  const filas = await sbGet<Publicada>(
+    `scheduled_posts?status=eq.published&published_at=gte.${encodeURIComponent(v.desde)}&published_at=lt.${encodeURIComponent(v.hasta)}`
+    + filtroMarcas(marcas) + `&select=${COLUMNAS_LIBRO}&order=published_at.desc&limit=${MAX_FILAS + 1}`);
+  const truncado = filas.length > MAX_FILAS;
+  const clasificadas = (await clasificar(truncado ? filas.slice(0, MAX_FILAS) : filas, marcas))
+    .filter((f) => CON_METRICAS.includes(f.via));
+  const m = await metricasDe(clasificadas.map((f) => f.id));
+  const conMetricas = clasificadas.map((f) => ({ ...f, metricas: m.porPost.get(f.id) ?? ([] as MetricaLeida[]) }));
+  const porId = new Map(conMetricas.map((f) => [f.id, f]));
+  return {
+    ventana: v,
+    truncado,
+    metricas: m.estado,
+    estadisticas: estadisticas(conMetricas).map((e) => ({ ...e, top: e.top.map((id) => porId.get(id)!) })),
+    cuenta: { estado: 'pendiente', motivo: 'SignalLab todavía no guarda las métricas diarias de la cuenta (seguidores, alcance, visitas al perfil)' },
+  };
+}
+
 const VISTAS: Record<string, (req: any, marcas: typeof TODAS | string[]) => Promise<unknown>> = {
-  publicado, envivo, calendario, ahora: ahoraMismo,
+  publicado, envivo, calendario, ahora: ahoraMismo, estadisticas: estadisticasVista,
 };
 
 export default async function handler(req: any, res: any) {

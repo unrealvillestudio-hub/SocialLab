@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { CalendarDays, Flame, LayoutGrid, LogOut } from 'lucide-react';
+import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut } from 'lucide-react';
 import { entrar, ops, ErrorApi, type Catalogo, type Sesion } from './api';
 import { Aviso, Cargando, cn } from './ui/components';
 import Publicado from './views/Publicado';
 import Calendario from './views/Calendario';
+import Estadisticas from './views/Estadisticas';
 import Hoy from './views/Hoy';
 
-type Pestana = 'hoy' | 'publicado' | 'calendario';
+type Pestana = 'hoy' | 'publicado' | 'estadisticas' | 'calendario';
 const PESTANAS: { id: Pestana; etiqueta: string; icono: React.ElementType }[] = [
   { id: 'hoy', etiqueta: 'Hoy', icono: Flame },
   { id: 'publicado', etiqueta: 'Publicado', icono: LayoutGrid },
+  { id: 'estadisticas', etiqueta: 'Estadísticas', icono: BarChart3 },
   { id: 'calendario', etiqueta: 'Calendario', icono: CalendarDays },
 ];
 
@@ -97,6 +99,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
             {catalogo.marcas.length === 0 && <Aviso>No hay marcas con cuenta conectada en tu alcance.</Aviso>}
             {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
             {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
+            {pestana === 'estadisticas' && <Estadisticas token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
             {pestana === 'calendario' && <Calendario token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}
           </>
         )}

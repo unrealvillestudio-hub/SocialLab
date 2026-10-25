@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
-  lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
+  lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
 
 let fallos = 0;
@@ -202,6 +202,33 @@ test('el enlace de una fila manual o externa es su platform_post_id cuando es un
   assert.equal(enlaceDeId('https://ejemplo/p/1'), 'https://ejemplo/p/1');
   assert.equal(enlaceDeId('18114924758028321'), null);
   assert.equal(enlaceDeId(null), null);
+});
+
+// ── 8 · Vía detectada y estadísticas ──────────────────────────────────────────
+
+test('una fila detectada en la plataforma es «detectada», aunque su canal sea del carril', () => {
+  const v = viasPorCanal(CANALES);
+  assert.equal(viaDe(v, A, 'RED_UNO', ORIGEN_DETECTADO), 'detectada');
+  assert.equal(viaDe(v, A, 'RED_UNO', 'otra_fuente'), 'carril');
+  assert.equal(viaDe(v, A, 'RED_UNO'), 'carril');
+});
+
+test('estadísticas: totales y medianas sólo de los posts medidos; el top ordena por la métrica de mayor total', () => {
+  const met = (o) => Object.entries(o).map(([metric, value]) => ({ metric, value }));
+  const e = estadisticas([
+    { id: 'p1', brand_id: A, platform: 'RED_UNO', formato: 'SINGLE_IMAGE', published_at: '2026-10-20T10:00:00Z', metricas: met({ m_alta: 100, m_baja: 1 }) },
+    { id: 'p2', brand_id: A, platform: 'RED_UNO', formato: 'CAROUSEL', published_at: '2026-10-20T18:00:00Z', metricas: met({ m_alta: 300, m_baja: 2 }) },
+    { id: 'p3', brand_id: A, platform: 'RED_UNO', formato: 'SINGLE_IMAGE', published_at: '2026-10-21T10:00:00Z', metricas: [] },
+    { id: 'p4', brand_id: B, platform: 'RED_UNO', formato: 'SINGLE_IMAGE', published_at: '2026-10-21T10:00:00Z', metricas: met({ m_alta: 5 }) },
+  ]);
+  assert.equal(e.length, 2, 'una tarjeta por (marca, plataforma)');
+  const a = e[0];
+  assert.deepEqual([a.publicaciones, a.medidas], [3, 2], 'el post sin medir cuenta como publicado, no como medido');
+  assert.deepEqual(a.metricas[0], { metric: 'm_alta', total: 400, mediana: 200, posts: 2 }, 'p3 no suma un cero ni baja la mediana');
+  assert.equal(a.metricaTop, 'm_alta');
+  assert.deepEqual(a.top, ['p2', 'p1'], 'el post sin medir no entra al top');
+  assert.deepEqual(a.porFormato, [{ formato: 'SINGLE_IMAGE', publicaciones: 2 }, { formato: 'CAROUSEL', publicaciones: 1 }]);
+  assert.deepEqual(a.porDia, [{ dia: '2026-10-20', publicaciones: 2 }, { dia: '2026-10-21', publicaciones: 1 }]);
 });
 
 if (fallos) { console.error(`\ntablero: ${fallos} fallo(s)`); process.exit(1); }

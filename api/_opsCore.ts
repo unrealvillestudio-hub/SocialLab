@@ -158,7 +158,15 @@ export function contar(filas: readonly FilaPublicada[]): Conteo[] {
 export interface Canal { brand_id: string; platform_key: string; publication_path: string | null; provider?: string | null }
 
 /** La vía por la que salió una publicación. `sin_canal` se dice, no se adivina. */
-export type Via = 'carril' | 'manual' | 'externa' | 'sin_canal';
+export type Via = 'carril' | 'manual' | 'externa' | 'detectada' | 'sin_canal';
+
+/**
+ * El `source_lab` con el que SignalLab asienta en el libro una publicación que encontró en la plataforma
+ * sin fila previa: alguien publicó fuera del sistema (`unrlvl-iid-functions` #483). Es vocabulario del
+ * sistema, no de una marca. Manda sobre el canal: esa fila cae en un canal `drained` y, sin esta regla,
+ * se leería como «carril».
+ */
+export const ORIGEN_DETECTADO = 'deteccion_plataforma';
 
 const VIA_POR_RUTA: Readonly<Record<string, Via>> = { drained: 'carril', manual: 'manual', external: 'externa' };
 
@@ -171,7 +179,8 @@ export function viasPorCanal(canales: readonly Canal[]): Map<string, Via> {
   return m;
 }
 
-export function viaDe(vias: Map<string, Via>, brandId: string, platform: string): Via {
+export function viaDe(vias: Map<string, Via>, brandId: string, platform: string, sourceLab?: string | null): Via {
+  if (sourceLab === ORIGEN_DETECTADO) return 'detectada';
   return vias.get(`${brandId}\u0000${String(platform ?? '').toUpperCase()}`) ?? 'sin_canal';
 }
 
@@ -189,6 +198,73 @@ export function formatoDeFila(mediaType: string | null | undefined, via: Via, fo
 /** El enlace de una fila: el `platform_post_id` cuando ya es una URL (manual, externa); si no, null. */
 export function enlaceDeId(platformPostId: string | null | undefined): string | null {
   return platformPostId && /^https?:\/\//i.test(platformPostId) ? platformPostId : null;
+}
+
+// ── Estadísticas por marca y plataforma ───────────────────────────────────────
+
+export interface FilaConMetricas {
+  id: string; brand_id: string; platform: string; formato: string; published_at: string;
+  metricas: { metric: string; value: number }[];
+}
+export interface ResumenMetrica { metric: string; total: number; mediana: number; posts: number }
+export interface Estadistica {
+  brand_id: string; platform: string;
+  publicaciones: number; medidas: number;
+  metricas: ResumenMetrica[];
+  porFormato: { formato: string; publicaciones: number }[];
+  /** La métrica con la que se ordena el top: la de mayor total en esta plataforma (dato, no literal). */
+  metricaTop: string | null;
+  top: string[];
+  porDia: { dia: string; publicaciones: number }[];
+}
+
+const mediana = (xs: number[]): number => {
+  if (!xs.length) return 0;
+  const o = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(o.length / 2);
+  return o.length % 2 ? o[m] : (o[m - 1] + o[m]) / 2;
+};
+
+/**
+ * Resumen por (marca, plataforma) de lo publicado en la ventana, con la última lectura de cada post.
+ * - `total` y `mediana` se calculan SÓLO sobre los posts que tienen esa métrica: un post sin medir no
+ *   suma un cero.
+ * - Las métricas salen de los datos: cada plataforma muestra las suyas, sin lista en el código.
+ * - `porDia` agrupa por fecha de publicación (UTC), no es la serie diaria de la cuenta.
+ */
+export function estadisticas(filas: readonly FilaConMetricas[], topN = 6): Estadistica[] {
+  const grupos = new Map<string, FilaConMetricas[]>();
+  for (const f of filas) {
+    const k = `${f.brand_id}\u0000${f.platform}`;
+    grupos.set(k, [...(grupos.get(k) ?? []), f]);
+  }
+  const out: Estadistica[] = [];
+  for (const g of grupos.values()) {
+    const valores = new Map<string, number[]>();
+    for (const f of g) for (const m of f.metricas) valores.set(m.metric, [...(valores.get(m.metric) ?? []), Number(m.value)]);
+    const metricas = [...valores.entries()]
+      .map(([metric, xs]) => ({ metric, total: xs.reduce((a, b) => a + b, 0), mediana: mediana(xs), posts: xs.length }))
+      .sort((a, b) => b.total - a.total || a.metric.localeCompare(b.metric));
+    const metricaTop = metricas[0]?.metric ?? null;
+    const valorDe = (f: FilaConMetricas) => f.metricas.find((m) => m.metric === metricaTop)?.value ?? -1;
+    const formatos = new Map<string, number>();
+    const dias = new Map<string, number>();
+    for (const f of g) {
+      formatos.set(f.formato, (formatos.get(f.formato) ?? 0) + 1);
+      const d = f.published_at.slice(0, 10);
+      dias.set(d, (dias.get(d) ?? 0) + 1);
+    }
+    out.push({
+      brand_id: g[0].brand_id, platform: g[0].platform,
+      publicaciones: g.length, medidas: g.filter((f) => f.metricas.length > 0).length,
+      metricas,
+      porFormato: [...formatos.entries()].map(([formato, publicaciones]) => ({ formato, publicaciones })).sort((a, b) => b.publicaciones - a.publicaciones),
+      metricaTop,
+      top: metricaTop ? g.filter((f) => valorDe(f) >= 0).sort((a, b) => Number(valorDe(b)) - Number(valorDe(a))).slice(0, topN).map((f) => f.id) : [],
+      porDia: [...dias.entries()].map(([dia, publicaciones]) => ({ dia, publicaciones })).sort((a, b) => a.dia.localeCompare(b.dia)),
+    });
+  }
+  return out.sort((a, b) => a.brand_id.localeCompare(b.brand_id) || a.platform.localeCompare(b.platform));
 }
 
 // ── Lectura en vivo, por plataforma ───────────────────────────────────────────
