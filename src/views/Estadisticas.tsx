@@ -1,13 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { ExternalLink, Lock } from 'lucide-react';
-import { ops, type Estadistica, type Marca, type RespEstadisticas } from '../api';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ExternalLink, Lock, Users } from 'lucide-react';
+import { ops, type Estadistica, type Marca, type RespEstadisticas, type ResumenCuenta } from '../api';
 import { Aviso, Cargando, Chip, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
 
 /**
  * ESTADÍSTICAS · una tarjeta por marca y plataforma, al estilo del panel profesional de la plataforma
- * (pedido de Sam, 2026-10-25). Hoy se alimenta de lo que SignalLab mide POR PUBLICACIÓN. Lo que es de la
- * CUENTA (seguidores, alcance diario, visitas al perfil, audiencia) lo guardará SignalLab; mientras no
- * exista, esa sección dice «pendiente», nunca cero.
+ * (pedido de Sam, 2026-10-25). Dos fuentes de SignalLab: lo medido POR PUBLICACIÓN y lo medido de la
+ * CUENTA (`content.account_metric_daily`: seguidores, alcance diario, visitas al perfil, desgloses).
+ * Lo que la plataforma todavía no da sale como meta («se desbloquea con N seguidores»), nunca como cero.
  */
 
 const RANGOS = [7, 30, 90] as const;
@@ -34,6 +34,17 @@ export default function Estadisticas({ token, marca, marcas }: { token: string; 
 
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
+  // Una tarjeta por marca y plataforma con publicaciones medidas O con métricas de cuenta.
+  const claves = useMemo(() => {
+    if (!data) return [];
+    const m = new Map<string, { k: string; e?: Estadistica; c?: ResumenCuenta }>();
+    for (const e of data.estadisticas) m.set(`${e.brand_id}|${e.platform}`, { k: `${e.brand_id}|${e.platform}`, e });
+    for (const c of data.cuenta.estado === 'medida' ? data.cuenta.cuentas : []) {
+      const k = `${c.brand_id}|${c.platform}`;
+      m.set(k, { ...(m.get(k) ?? { k }), c });
+    }
+    return [...m.values()].sort((a, b) => a.k.localeCompare(b.k));
+  }, [data]);
 
   return (
     <div className="space-y-5">
@@ -53,10 +64,12 @@ export default function Estadisticas({ token, marca, marcas }: { token: string; 
         <>
           {data.metricas === 'tabla_inexistente' && <Aviso>Métricas: <b>sin medir</b>. SignalLab todavía no escribe instantáneas.</Aviso>}
           {data.truncado && <Aviso tono="error">La ventana tiene más publicaciones de las que se resumen: acota el rango.</Aviso>}
-          {data.estadisticas.length === 0 && <Aviso>No hay publicaciones medibles en estos {dias} días.</Aviso>}
+          {data.cuenta.estado === 'medida' && data.cuenta.truncado && <Aviso tono="error">La cuenta tiene más filas de las que se resumen: acota el rango.</Aviso>}
+          {claves.length === 0 && <Aviso>No hay publicaciones ni métricas de cuenta en estos {dias} días.</Aviso>}
           <div className="grid gap-4 xl:grid-cols-2">
-            {data.estadisticas.map((e) => (
-              <Tarjeta key={`${e.brand_id}-${e.platform}`} e={e} nombre={nombre(e.brand_id)} huso={huso(e.brand_id)} motivoCuenta={data.cuenta.motivo} />
+            {claves.map(({ k, e, c }) => (
+              <Tarjeta key={k} e={e} c={c} nombre={nombre((e ?? c)!.brand_id)} huso={huso((e ?? c)!.brand_id)}
+                cuenta={data.cuenta} />
             ))}
           </div>
         </>
@@ -65,17 +78,149 @@ export default function Estadisticas({ token, marca, marcas }: { token: string; 
   );
 }
 
-function Tarjeta({ e, nombre, huso, motivoCuenta }: { e: Estadistica; nombre: string; huso: string | null; motivoCuenta: string }) {
-  const maxFormato = Math.max(1, ...e.porFormato.map((f) => f.publicaciones));
-  const maxDia = Math.max(1, ...e.porDia.map((d) => d.publicaciones));
+function Tarjeta({ e, c, nombre, huso, cuenta }: {
+  e?: Estadistica; c?: ResumenCuenta; nombre: string; huso: string | null; cuenta: RespEstadisticas['cuenta'];
+}) {
+  const platform = (e ?? c)!.platform;
   return (
     <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-4">
       <header className="flex flex-wrap items-center gap-2">
         <Chip className="text-zinc-100">{nombre}</Chip>
-        <Chip>{etiquetaPlataforma(e.platform)}</Chip>
-        <span className="ml-auto text-[11px] text-zinc-500">{e.publicaciones} publicadas · {e.medidas} medidas</span>
+        <Chip>{etiquetaPlataforma(platform)}</Chip>
+        {c?.seguidores && (
+          <span className="flex items-center gap-1.5 text-sm text-zinc-100" title={`seguidores al ${c.seguidores.fecha}`}>
+            <Users className="w-4 h-4 text-accent" /><b>{numero(c.seguidores.value)}</b><span className="text-[11px] text-zinc-500">{c.seguidores.value === 1 ? 'seguidor' : 'seguidores'}</span>
+          </span>
+        )}
+        {e && <span className="ml-auto text-[11px] text-zinc-500">{e.publicaciones} publicadas · {e.medidas} medidas</span>}
       </header>
 
+      {c ? <Cuenta c={c} relectura={cuenta.estado === 'medida' ? cuenta.relectura_dias : 0} />
+        : (
+          <div className="rounded-xl border border-dashed border-zinc-700 p-3 flex items-start gap-2 text-[11px] text-zinc-500">
+            <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span><b className="text-zinc-300">Cuenta:</b> {cuenta.estado === 'pendiente' ? `pendiente. ${cuenta.motivo}.` : 'sin lecturas de esta cuenta en la ventana.'}</span>
+          </div>
+        )}
+
+      {e && <Publicaciones e={e} huso={huso} />}
+    </section>
+  );
+}
+
+// ── La cuenta ─────────────────────────────────────────────────────────────────
+
+function Cuenta({ c, relectura }: { c: ResumenCuenta; relectura: number }) {
+  const seguidores = c.seguidores?.value ?? null;
+  // Lo bloqueado se agrupa por umbral: una meta por número de seguidores, no una por métrica.
+  const metas = [...c.bloqueadas.reduce((m, b) => {
+    const k = b.min_followers ?? -1;
+    return m.set(k, [...(m.get(k) ?? []), b]);
+  }, new Map<number, ResumenCuenta['bloqueadas']>())].sort((a, b) => a[0] - b[0]);
+  return (
+    <div className="space-y-4">
+      <h4 className="text-[11px] uppercase tracking-wider text-zinc-400">Cuenta</h4>
+
+      {(c.totales.length > 0 || c.campos.length > 0) && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {c.totales.map((t) => (
+            <div key={t.metric} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3" title={t.nota ?? undefined}>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(t.metric)}</div>
+              <div className="text-xl font-semibold text-zinc-100">{numero(t.total)}</div>
+              <div className="text-[10px] text-zinc-500">{t.dias === 1 ? '1 día medido' : `${t.dias} días medidos`}</div>
+            </div>
+          ))}
+          {c.campos.map((f) => (
+            <div key={f.metric} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(f.metric)}</div>
+              <div className="text-xl font-semibold text-zinc-100">{numero(f.value)}</div>
+              <div className="text-[10px] text-zinc-500">al {f.fecha}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {c.series.map((s) => <Serie key={s.metric} s={s} relectura={relectura} />)}
+
+      {c.desgloses.map((d) => {
+        const total = d.valores.reduce((x, v) => x + v.total, 0) || 1;
+        return (
+          <div key={`${d.metric}-${d.breakdown}`}>
+            <h5 className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">{etiquetaMetrica(d.metric)} por {etiquetaMetrica(d.breakdown)}</h5>
+            <div className="space-y-1">
+              {d.valores.slice(0, 8).map((v) => (
+                <div key={v.valor} className="flex items-center gap-2 text-[11px]">
+                  <span className="w-28 truncate text-zinc-400">{etiquetaMetrica(v.valor.toLowerCase())}</span>
+                  <div className="flex-1 h-2 rounded-full bg-zinc-800 overflow-hidden">
+                    <div className="h-full bg-accent/70" style={{ width: `${(v.total / total) * 100}%` }} />
+                  </div>
+                  <span className="w-20 text-right text-zinc-300">{numero(v.total)} <span className="text-zinc-600">{Math.round((v.total / total) * 100)}%</span></span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {metas.map(([umbral, bs]) => (
+        <div key={umbral} className="rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
+          <div className="flex items-center gap-2 text-[11px] text-amber-200">
+            <Lock className="w-3.5 h-3.5" />
+            {umbral > 0
+              ? <span>Se desbloquea con <b>{numero(umbral)} seguidores</b>{seguidores !== null && <> · hoy {numero(seguidores)} · faltan <b>{numero(Math.max(0, umbral - seguidores))}</b></>}</span>
+              : <span>La plataforma todavía no la da</span>}
+          </div>
+          {umbral > 0 && seguidores !== null && (
+            <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, (seguidores / umbral) * 100)}%` }} />
+            </div>
+          )}
+          <div className="text-[10px] text-zinc-500">{[...new Set(bs.map((b) => etiquetaMetrica(b.metric) + (b.breakdown ? ` (${etiquetaMetrica(b.breakdown)})` : '')))].join(' · ')}</div>
+        </div>
+      ))}
+
+      {c.sinDatos.length > 0 && (
+        <p className="text-[10px] text-zinc-600">Sin datos en la ventana: {c.sinDatos.map((d) => etiquetaMetrica(d.metric) + (d.breakdown ? ` (${etiquetaMetrica(d.breakdown)})` : '')).join(' · ')}</p>
+      )}
+    </div>
+  );
+}
+
+function Serie({ s, relectura }: { s: ResumenCuenta['series'][number]; relectura: number }) {
+  const conValor = s.puntos.filter((p) => p.value !== null);
+  const max = Math.max(1, ...conValor.map((p) => p.value!));
+  const total = conValor.reduce((x, p) => x + p.value!, 0);
+  const hayProvisional = s.puntos.some((p) => p.provisional);
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-1">
+        <h5 className="text-[10px] uppercase tracking-wider text-zinc-500" title={s.nota ?? undefined}>{etiquetaMetrica(s.metric)} por día</h5>
+        <span className="text-xs text-zinc-200 font-semibold">{numero(total)}</span>
+        <span className="text-[10px] text-zinc-600">suma de {conValor.length} días</span>
+      </div>
+      <div className="flex items-end gap-1 h-16">
+        {s.puntos.map((p) => (
+          <div key={p.fecha} className="flex-1 min-w-[4px] h-full flex items-end"
+            title={`${p.fecha}: ${p.value === null ? (p.motivo ?? 'sin datos') : numero(p.value)}${p.provisional ? ' · provisional' : ''}`}>
+            {p.value === null
+              ? <div className="w-full h-[3px] rounded bg-zinc-800" />
+              : <div className={cn('w-full rounded-t', p.provisional ? 'bg-accent/40' : 'bg-accent/80')} style={{ height: `${Math.max(3, (p.value / max) * 100)}%` }} />}
+          </div>
+        ))}
+      </div>
+      {hayProvisional && <p className="mt-1 text-[10px] text-zinc-600">Los últimos {relectura} días son provisionales: la plataforma los consolida con retraso y SignalLab los relee.</p>}
+    </div>
+  );
+}
+
+// ── Las publicaciones ─────────────────────────────────────────────────────────
+
+function Publicaciones({ e, huso }: { e: Estadistica; huso: string | null }) {
+  const maxFormato = Math.max(1, ...e.porFormato.map((f) => f.publicaciones));
+  const maxDia = Math.max(1, ...e.porDia.map((d) => d.publicaciones));
+  return (
+    <div className="space-y-4 border-t border-zinc-800 pt-4">
+      <h4 className="text-[11px] uppercase tracking-wider text-zinc-400">Publicaciones</h4>
       <p className="text-[10px] text-zinc-500">
         Totales = suma de la última lectura de cada publicación. El alcance sumado cuenta varias veces a quien vio varios posts:
         no es el alcance único de la cuenta, que llegará con las métricas de cuenta.
@@ -144,13 +289,6 @@ function Tarjeta({ e, nombre, huso, motivoCuenta }: { e: Estadistica; nombre: st
         </div>
       )}
 
-      {/* Lo que es de la cuenta: pendiente de SignalLab */}
-      <div className="rounded-xl border border-dashed border-zinc-700 p-3 flex items-start gap-2 text-[11px] text-zinc-500">
-        <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        <span>
-          <b className="text-zinc-300">Seguidores, alcance diario, visitas al perfil y audiencia:</b> pendiente. {motivoCuenta}.
-        </span>
-      </div>
-    </section>
+    </div>
   );
 }

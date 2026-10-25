@@ -18,8 +18,8 @@
  */
 import {
   ventana, contar, formatoDe, ultimasMetricas, marcasConsultadas, lectorDe, normalizarRespuesta,
-  LECTORES_EN_VIVO, TODAS, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas,
-  type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo, type Canal, type Via,
+  LECTORES_EN_VIVO, TODAS, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta,
+  type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo, type Canal, type Via, type FilaCuenta, type MetricaCatalogo,
 } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, esTablaInexistente, mcpLeer, LecturaFallida } from './_opsShared.js';
 
@@ -276,8 +276,46 @@ async function estadisticasVista(req: any, marcas: typeof TODAS | string[]) {
     truncado,
     metricas: m.estado,
     estadisticas: estadisticas(conMetricas).map((e) => ({ ...e, top: e.top.map((id) => porId.get(id)!) })),
-    cuenta: { estado: 'pendiente', motivo: 'SignalLab todavía no guarda las métricas diarias de la cuenta (seguidores, alcance, visitas al perfil)' },
+    cuenta: await cuentaDe(v, marcas, ahora),
   };
+}
+
+/** Tope de filas de cuenta por consulta: 90 días de desgloses de varias cuentas caben de sobra. */
+const MAX_FILAS_CUENTA = 20_000;
+const PAGINA_CUENTA = 1000;
+
+/**
+ * Lo que SignalLab mide de la CUENTA en la ventana (`content.account_metric_daily`), con su catálogo y
+ * los días de relectura de su configuración. Si la tabla no existe, `pendiente`; nunca ceros.
+ */
+async function cuentaDe(v: { desde: string; hasta: string }, marcas: typeof TODAS | string[], ahora: number) {
+  const desde = v.desde.slice(0, 10), hasta = v.hasta.slice(0, 10);
+  try {
+    const [catalogoCuenta, config] = await Promise.all([
+      sbGet<MetricaCatalogo>('signal_account_metrics?active=is.true&select=platform,metric,breakdown,read_as,min_followers,notes', 'intel'),
+      sbGet<{ value: unknown }>('signal_collector_config?key=eq.account_series_days&select=value', 'intel'),
+    ]);
+    const relectura = Number(config[0]?.value);
+    if (!Number.isFinite(relectura)) throw new LecturaFallida('signal_collector_config', 'falta account_series_days');
+    const filas: FilaCuenta[] = [];
+    for (let offset = 0; offset < MAX_FILAS_CUENTA; offset += PAGINA_CUENTA) {
+      const pagina = await sbGet<FilaCuenta>(
+        `account_metric_daily?metric_date=gte.${desde}&metric_date=lte.${hasta}${filtroMarcas(marcas)}`
+        + '&select=brand_id,platform,metric_date,metric,breakdown,breakdown_value,value,unavailable_reason'
+        + `&order=brand_id,platform,metric,breakdown,breakdown_value,metric_date&limit=${PAGINA_CUENTA}&offset=${offset}`, 'content');
+      filas.push(...pagina);
+      if (pagina.length < PAGINA_CUENTA) break;
+    }
+    return {
+      estado: 'medida' as const,
+      relectura_dias: relectura,
+      truncado: filas.length >= MAX_FILAS_CUENTA,
+      cuentas: resumenCuenta(filas, catalogoCuenta, relectura, new Date(ahora).toISOString().slice(0, 10)),
+    };
+  } catch (err) {
+    if (esTablaInexistente(err)) return { estado: 'pendiente' as const, motivo: 'SignalLab todavía no guarda las métricas diarias de la cuenta' };
+    throw err;
+  }
 }
 
 const VISTAS: Record<string, (req: any, marcas: typeof TODAS | string[]) => Promise<unknown>> = {
