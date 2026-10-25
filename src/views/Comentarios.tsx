@@ -86,11 +86,11 @@ export default function Comentarios({ token, marca, marcas, post = null, onQuita
       <div className="flex flex-wrap items-center gap-2">
         {RANGOS.map((r) => (
           <button key={r} onClick={() => setDias(r)}
-            className={cn('px-3 py-1.5 rounded-lg text-xs border', dias === r ? 'bg-accent text-black border-accent' : 'border-zinc-800 text-zinc-400 hover:bg-zinc-800')}>
+            className={cn('px-3 py-2 rounded-lg text-xs border', dias === r ? 'bg-accent/10 text-accent border-accent/50' : 'border-zinc-800 text-zinc-400 hover:bg-zinc-800')}>
             {r} días
           </button>
         ))}
-        <label className="flex items-center gap-1.5 text-[11px] text-zinc-400 ml-2">
+        <label className="order-last sm:order-none basis-full sm:basis-auto flex items-center gap-1.5 text-[11px] text-zinc-400 sm:ml-2 py-1">
           <input type="checkbox" checked={verDeLaMarca} onChange={(e) => setVerDeLaMarca(e.target.checked)} />
           ver también los comentarios de la marca
         </label>
@@ -155,7 +155,7 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
 
   return (
     <li className={cn('rounded-xl border p-3 space-y-2', espera_ ? 'border-amber-500/30 bg-amber-500/[0.03]' : 'border-zinc-800 bg-zinc-900/30',
-      c.parent_comment_id && 'ml-6')}>
+      c.parent_comment_id && 'ml-3 sm:ml-6')}>
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         <span className={cn('px-1.5 py-0.5 rounded font-mono uppercase text-[10px]', estado.clase)}>{estado.etiqueta}</span>
         <Chip className="text-zinc-200">{nombre}</Chip>
@@ -163,9 +163,9 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
         {c.parent_comment_id && <Chip>respuesta en un hilo</Chip>}
         <span className="text-zinc-400 font-medium">{c.author_name ?? 'autor desconocido'}</span>
         <span className="text-zinc-600">· {fechaHora(c.commented_at, huso)}</span>
-        {espera_ && <span className="ml-auto font-mono text-amber-300">espera {espera(c.commented_at)}</span>}
+        {espera_ && <span className="ml-auto text-amber-300">espera {espera(c.commented_at)}</span>}
       </div>
-      <p className="text-sm text-zinc-200 whitespace-pre-line">{c.text ?? ''}</p>
+      <p className="texto-editorial text-sm text-zinc-100 whitespace-pre-line break-words">{c.text ?? ''}</p>
       {post ? (
         <a href={post.enlace ?? undefined} target="_blank" rel="noreferrer"
           className="flex items-center gap-2 rounded-lg bg-zinc-950/50 border border-zinc-800 p-1.5 hover:border-zinc-700">
@@ -199,11 +199,11 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
       )}
 
       {puedeResponder && (
-        <div className="flex items-end gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-2">
           <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={2} placeholder="Escribe la respuesta de la marca…"
             className="entrada flex-1 resize-y" />
           <button onClick={enviar} disabled={enviando || !texto.trim()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent text-black text-xs font-semibold disabled:opacity-40">
+            className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-accent text-black text-xs font-bold disabled:opacity-40">
             <Send className="w-3.5 h-3.5" /> {enviando ? 'Enviando…' : 'Responder'}
           </button>
         </div>

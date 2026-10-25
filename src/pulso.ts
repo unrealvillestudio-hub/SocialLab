@@ -55,3 +55,51 @@ export function aumentosDeComentarios(
   }
   return out;
 }
+
+// ── Lectura en vivo por actividad de la cuenta (Sam, 2026-10-25) ───────────────
+//
+// Cada lectura en vivo cuesta una llamada por CUENTA (marca × plataforma), no por post: el listado trae
+// los últimos posts de la cuenta de una vez. Por eso el ahorro está en leer menos seguido las cuentas
+// quietas: las que publicaron en los últimos `DIAS_ACTIVA` días se leen cada minuto; todas las demás,
+// en la lectura completa de cada `LECTURA_COMPLETA_CADA` minutos.
+
+/** Una cuenta con publicaciones en estos días se lee cada minuto. */
+export const DIAS_ACTIVA = 7;
+/** Cada cuántos ciclos de un minuto se leen TODAS las cuentas. */
+export const LECTURA_COMPLETA_CADA = 10;
+
+export interface LecturaCuenta { brand_id: string; platform: string; publicaciones: number; error: string | null }
+export interface PostEnVivo { brand_id: string; platform: string; publicado_en: string | null }
+export interface Lectura<P extends PostEnVivo> { limite: number; lecturas: LecturaCuenta[]; publicaciones: P[] }
+
+export const claveCuenta = (brand_id: string, platform: string) => `${brand_id}:${platform}`;
+
+/** Las cuentas con al menos una publicación dentro de los últimos `dias`, según la última lectura. */
+export function cuentasActivas(publicaciones: readonly PostEnVivo[], ahora: number, dias = DIAS_ACTIVA): string[] {
+  const desde = ahora - dias * 86_400_000;
+  return [...new Set(publicaciones
+    .filter((p) => p.publicado_en && Date.parse(p.publicado_en) >= desde)
+    .map((p) => claveCuenta(p.brand_id, p.platform)))].sort();
+}
+
+/**
+ * Qué leer en este ciclo: `'todas'` en el primero y cada `cada` ciclos; si no, sólo las activas.
+ * Sin cuentas activas, `[]`: ese ciclo no llama a la plataforma.
+ */
+export function planDeLectura(ciclo: number, hayLecturaPrevia: boolean, activas: readonly string[], cada = LECTURA_COMPLETA_CADA): 'todas' | string[] {
+  if (!hayLecturaPrevia || ciclo % cada === 0) return 'todas';
+  return [...activas];
+}
+
+/** Sustituye en la lectura previa sólo las cuentas que se acaban de leer; las demás se conservan. */
+export function fusionarLectura<P extends PostEnVivo>(previa: Lectura<P> | null, nueva: Lectura<P>): Lectura<P> {
+  if (!previa) return nueva;
+  const leidas = new Set(nueva.lecturas.map((l) => claveCuenta(l.brand_id, l.platform)));
+  const fuera = (x: { brand_id: string; platform: string }) => !leidas.has(claveCuenta(x.brand_id, x.platform));
+  return {
+    limite: nueva.limite,
+    lecturas: [...previa.lecturas.filter(fuera), ...nueva.lecturas],
+    publicaciones: [...previa.publicaciones.filter(fuera), ...nueva.publicaciones]
+      .sort((a, b) => String(b.publicado_en ?? '').localeCompare(String(a.publicado_en ?? ''))),
+  };
+}

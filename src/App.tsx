@@ -18,11 +18,12 @@ const PESTANAS: { id: Pestana; etiqueta: string; icono: React.ElementType }[] = 
   { id: 'calendario', etiqueta: 'Calendario', icono: CalendarDays },
 ];
 
+/** El lockup del estudio (>UNREALVILLE studio, BP v1.6) y el nombre de la app. */
 const Logo = () => (
-  <div className="flex items-center gap-2 font-bold tracking-tighter text-lg">
-    <div className="w-6 h-6 bg-accent rounded-sm flex items-center justify-center text-black text-[10px] font-black">UV</div>
-    <span>SocialLab</span>
-    <span className="text-[10px] font-mono font-normal text-zinc-500 tracking-normal">tablero de operadores</span>
+  <div className="flex items-baseline gap-2 min-w-0">
+    <span className="lt-logotype text-xl"><span className="lt-chevron">&gt;</span><span>UNREALVILLE</span><span className="lt-studio">studio</span></span>
+    <span className="titulo text-xl text-accent">SocialLab</span>
+    <span className="hidden md:inline text-[10px] text-zinc-500">tablero de operadores</span>
   </div>
 );
 
@@ -45,7 +46,7 @@ function Entrada({ onSesion }: { onSesion: (s: Sesion) => void }) {
   };
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
-      <form onSubmit={enviar} className="w-full max-w-sm space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
+      <form onSubmit={enviar} className="w-full max-w-sm space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-5 sm:p-6">
         <Logo />
         <p className="text-xs text-zinc-500">Entra con la misma contraseña del Orchestrator.</p>
         <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña" className="entrada w-full" />
@@ -66,6 +67,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
   /** La publicación cuya bandeja se abrió desde su pill o desde el aviso; `null` = todas. */
   const [postComentarios, setPostComentarios] = useState<string | null>(null);
   const atender = useCallback((id: string | null) => { setPostComentarios(id); setPestana('comentarios'); }, []);
+  const irA = (id: Pestana) => { setPestana(id); if (id === 'comentarios') setPostComentarios(null); };
 
   useEffect(() => {
     ops<Catalogo>(sesion.session_token, 'catalogo')
@@ -74,34 +76,46 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
   }, [sesion.session_token]);
 
   return (
-    <div className="min-h-screen">
-      <header className="h-14 border-b border-zinc-800 px-4 sm:px-6 flex items-center justify-between sticky top-0 bg-uv-bg/90 backdrop-blur-md z-50">
+    <div className="min-h-screen pb-24 md:pb-0">
+      <header className="h-14 border-b border-zinc-800 px-4 sm:px-6 flex items-center justify-between gap-3 sticky top-0 bg-uv-bg/90 backdrop-blur-md z-50">
         <Logo />
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] text-zinc-400">{sesion.sub} <span className="font-mono text-accent/70 uppercase">{sesion.role}</span></span>
-          <button onClick={onSalir} title="Salir" className="p-2 rounded-full hover:bg-zinc-800"><LogOut className="w-4 h-4 text-zinc-500" /></button>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="hidden sm:inline text-[11px] text-zinc-400">{sesion.sub} <span className="text-accent/70 uppercase">{sesion.role}</span></span>
+          <button onClick={onSalir} title="Salir" aria-label="Salir" className="p-2.5 rounded-full hover:bg-zinc-800"><LogOut className="w-4 h-4 text-zinc-500" /></button>
         </div>
       </header>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
         {error && <Aviso tono="error">{error}</Aviso>}
         {!catalogo && !error && <Cargando />}
         {catalogo && (
           <ProveedorPulso token={sesion.session_token} marca={marca} onAtender={atender}>
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
+              {/* Pestañas arriba desde tablet; en el teléfono van en la barra inferior (abajo, al alcance del pulgar). */}
+              <nav className="hidden md:flex items-center gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
                 {PESTANAS.map((p) => (
-                  <button key={p.id} onClick={() => { setPestana(p.id); if (p.id === 'comentarios') setPostComentarios(null); }}
-                    className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
-                      pestana === p.id ? 'bg-accent text-black' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800')}>
+                  <button key={p.id} onClick={() => irA(p.id)}
+                    className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all border',
+                      pestana === p.id ? 'bg-accent/10 text-accent border-accent/40' : 'border-transparent text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800')}>
                     <p.icono className="w-4 h-4" />{p.etiqueta}
                   </button>
                 ))}
-              </div>
-              <select value={marca} onChange={(e) => setMarca(e.target.value)} className="entrada">
+              </nav>
+              <select value={marca} onChange={(e) => setMarca(e.target.value)} className="entrada w-full md:w-auto">
                 {catalogo.marcas.length > 1 && <option value="">Todas mis marcas ({catalogo.marcas.length})</option>}
                 {catalogo.marcas.map((m) => <option key={m.brand_id} value={m.brand_id}>{m.nombre}</option>)}
               </select>
             </div>
+            <h2 className="md:hidden titulo text-2xl text-zinc-100">{PESTANAS.find((p) => p.id === pestana)?.etiqueta}</h2>
+            <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-zinc-800 bg-uv-bg/95 backdrop-blur-md grid grid-cols-5"
+              style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+              {PESTANAS.map((p) => (
+                <button key={p.id} onClick={() => irA(p.id)} aria-current={pestana === p.id ? 'page' : undefined}
+                  className={cn('flex flex-col items-center gap-1 py-2.5 text-[10px] border-t-2',
+                    pestana === p.id ? 'text-accent border-accent' : 'text-zinc-500 border-transparent')}>
+                  <p.icono className="w-5 h-5" />{p.etiqueta}
+                </button>
+              ))}
+            </nav>
             {catalogo.marcas.length === 0 && <Aviso>No hay marcas con cuenta conectada en tu alcance.</Aviso>}
             <AvisoComentarios marcas={catalogo.marcas} />
             {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />}

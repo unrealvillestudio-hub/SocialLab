@@ -1,15 +1,18 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { BellRing, ExternalLink, MessageCircle, X } from 'lucide-react';
 import { comentarios as leerComentarios, ops, type EnVivo, type Marca, type RespEnVivo } from '../api';
-import { aumentosDeComentarios, combinarMetricas, METRICA_COMENTARIOS, type MetricaMedida } from '../pulso';
+import {
+  aumentosDeComentarios, combinarMetricas, cuentasActivas, fusionarLectura, planDeLectura, METRICA_COMENTARIOS, type MetricaMedida,
+} from '../pulso';
 import { Pills } from './Pills';
 import { etiquetaPlataforma } from './components';
 
 /**
  * PULSO DEL TABLERO · una sola lectura en vivo y una sola bandeja para todas las pestañas.
  *
- * · En vivo: el listado de la plataforma cada minuto, sólo con la pestaña del navegador visible
- *   (cada lectura es una llamada a Meta por cuenta; con la pestaña oculta no se gasta cuota).
+ * · En vivo: el listado de la plataforma, sólo con la pestaña del navegador visible. Cada minuto se leen
+ *   las cuentas que publicaron en los últimos 7 días; todas, cada 10 minutos (`planDeLectura`). Cada
+ *   lectura es una llamada a Meta por cuenta; con la pestaña oculta no se gasta cuota.
  * · Comentarios: `/api/comments` cada minuto. Lo que espera respuesta se cuenta por publicación.
  * · Comentario nuevo: el contador en vivo de un post sube, o aparece en la bandeja un comentario
  *   pendiente que esta sesión no había visto. Abre el aviso hasta que el operador lo atiende.
@@ -85,13 +88,21 @@ export function ProveedorPulso({ token, marca, onAtender, children }: {
     return copia;
   }), []);
 
+  const vivoRef = useRef<RespEnVivo | null>(null);
+  useEffect(() => { vivoRef.current = null; setVivo(null); }, [marca]);
+
   useEffect(() => {
     if (tick === 0) return;
+    const previa = vivoRef.current;
+    const plan = planDeLectura(tick - 1, !!previa, cuentasActivas(previa?.publicaciones ?? [], Date.now()));
+    if (plan !== 'todas' && plan.length === 0) return; // nada activo: este minuto no llama a la plataforma
     let activo = true;
     setCargandoVivo(true);
-    ops<RespEnVivo>(token, 'envivo', { marca: marca || undefined, limite: '50' })
-      .then((r) => {
+    ops<RespEnVivo>(token, 'envivo', { marca: marca || undefined, limite: '50', cuentas: plan === 'todas' ? undefined : plan.join(',') })
+      .then((nueva) => {
         if (!activo) return;
+        const r = fusionarLectura(vivoRef.current, nueva);
+        vivoRef.current = r;
         setVivo(r); setErrorVivo(null); setLeidoVivoEn(Date.now());
         const lectura = r.publicaciones.flatMap((p) => {
           const c = p.contadores?.find((x) => x.metric === METRICA_COMENTARIOS);
@@ -147,7 +158,7 @@ export function ProveedorPulso({ token, marca, onAtender, children }: {
   const valor = useMemo<Pulso>(() => ({
     vivo, errorVivo, cargandoVivo, leidoVivoEn,
     vivoPorId: new Map((vivo?.publicaciones ?? []).map((v) => [v.platform_post_id, v])),
-    recargar: () => setTick((n) => n + 1),
+    recargar: () => { vivoRef.current = null; setTick((n) => n + 1); },
     pendientesPorPost, pendientes, nuevos,
     nuevosPorPost: new Set(nuevos.flatMap((n) => (n.scheduled_post_id ? [n.scheduled_post_id] : []))),
     atender: (id) => { setNuevos((xs) => xs.filter((x) => x.scheduled_post_id !== id)); onAtender(id); },
@@ -184,13 +195,13 @@ export function AvisoComentarios({ marcas }: { marcas: Marca[] }) {
           <li key={n.clave} className="flex flex-wrap items-center gap-2 text-xs text-zinc-200">
             <span>{nombre(n.brand_id)} · {etiquetaPlataforma(n.platform)}{n.cuantos > 1 ? ` · ${n.cuantos} nuevos` : ''}</span>
             {!n.en_bandeja && <span className="text-[10px] text-zinc-400">llega a la bandeja con la próxima lectura de SignalLab</span>}
-            <span className="ml-auto flex items-center gap-2">
+            <span className="w-full sm:w-auto sm:ml-auto flex items-center justify-end gap-2">
               {!n.en_bandeja && n.permalink && (
                 <a href={n.permalink} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-accent hover:underline">
                   Ver en la plataforma <ExternalLink className="w-3 h-3" />
                 </a>
               )}
-              <button onClick={() => atender(n.scheduled_post_id)} className="px-2.5 py-1 rounded-lg bg-amber-400 text-black text-[11px] font-semibold">Atender</button>
+              <button onClick={() => atender(n.scheduled_post_id)} className="px-3 py-2 rounded-lg bg-amber-400 text-black text-[11px] font-bold">Atender</button>
             </span>
           </li>
         ))}

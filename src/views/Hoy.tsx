@@ -31,7 +31,7 @@ export default function Hoy({ token, marca, marcas }: { token: string; marca: st
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-        <div className="text-sm font-semibold text-zinc-200">Happening now · últimas {Math.round(data.minutos / 60)} h</div>
+        <div className="titulo text-xl text-zinc-100">Happening now · últimas {Math.round(data.minutos / 60)} h</div>
         <div className="mt-1 text-xs text-zinc-400">
           <b className="text-amber-300">{data.estado === 'sin_medir' ? 'Sin medir' : 'Sin ordenar'}</b> — {data.motivo}.
         </div>
@@ -40,11 +40,11 @@ export default function Hoy({ token, marca, marcas }: { token: string; marca: st
       <ul className="space-y-2">
         {data.publicaciones.map((p) => (
           <li key={p.id} className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-3 flex flex-wrap items-center gap-2 text-[11px]">
-            <span className="font-mono text-zinc-500 w-28">{fechaHora(p.published_at, huso(p.brand_id))}</span>
+            <span className="text-zinc-500 basis-full sm:basis-auto sm:w-28">{fechaHora(p.published_at, huso(p.brand_id))}</span>
             <Chip className="text-zinc-200">{nombre(p.brand_id)}</Chip>
             <Chip>{etiquetaPlataforma(p.platform)}</Chip>
             <Chip>{etiquetaFormato(p.formato)}</Chip>
-            <span className="flex-1 min-w-[12rem] truncate text-zinc-400">{p.copy_text ?? ''}</span>
+            <span className="texto-editorial basis-full sm:basis-auto sm:flex-1 min-w-0 truncate text-zinc-400">{p.copy_text ?? ''}</span>
             <PillsDePost id={p.id} platformPostId={p.platform_post_id} metricas={p.metricas} />
           </li>
         ))}
