@@ -24,9 +24,13 @@ import { usePulso } from '../ui/Pulso';
  * comentar»). Por defecto sólo se ve lo pendiente; lo respondido y lo cerrado —«Hecho», «Contestado fuera», «Descartar»—
  * sale en el acto y queda a la vista con «ver atendidos», donde se puede reabrir. Los comentarios van agrupados bajo su
  * publicación, que se muestra una vez, y cada tarjeta lleva el color de su plataforma.
+ *
+ * DESHACER (Sam, 2026-10-26): un cierre se puede deshacer durante `SEGUNDOS_DESHACER` desde el aviso que aparece abajo,
+ * sin ir a «ver atendidos». Una respuesta enviada no se deshace: ya salió a la plataforma.
  */
 
 const DIA = 86_400_000;
+const SEGUNDOS_DESHACER = 8;
 const RANGOS = [3, 7, 30] as const;
 
 const ESTADO: Record<EstadoComentario, { etiqueta: string; clase: string }> = {
@@ -110,7 +114,31 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
     }
     return [...m.entries()];
   }, [visibles]);
-  const atender = (id: number) => { setAtendidos((s) => new Set(s).add(id)); setTick((n) => n + 1); };
+  const [deshacer, setDeshacer] = useState<{ id: number; autor: string; kind: TipoCierre } | null>(null);
+  const [errorDeshacer, setErrorDeshacer] = useState<string | null>(null);
+  useEffect(() => {
+    if (!deshacer) return;
+    const t = setTimeout(() => setDeshacer(null), SEGUNDOS_DESHACER * 1000);
+    return () => clearTimeout(t);
+  }, [deshacer]);
+  const atender = (id: number, cierre?: TipoCierre) => {
+    setAtendidos((s) => new Set(s).add(id)); setTick((n) => n + 1);
+    if (cierre) {
+      const c = data?.comentarios.find((x) => x.id === id);
+      setErrorDeshacer(null);
+      setDeshacer({ id, autor: c?.author_name ?? 'el comentario', kind: cierre });
+    }
+  };
+  const reabrir = async () => {
+    if (!deshacer) return;
+    const { id } = deshacer;
+    setDeshacer(null);
+    try {
+      await cerrarComentario(token, id, null);
+      setAtendidos((s) => { const n = new Set(s); n.delete(id); return n; });
+    } catch (e) { setErrorDeshacer(e instanceof ErrorApi ? e.message : String(e)); }
+    finally { setTick((n) => n + 1); }
+  };
   const delPost = post ? posts.get(post) : undefined;
   // Con un filtro (plataforma o post), los contadores son los de lo filtrado; sin filtro, los del endpoint.
   const filtrado = !!(post || plataforma);
@@ -167,13 +195,22 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
                 <ul className="space-y-2.5">
                   {cs.map((c) => (
                     <TarjetaComentario key={c.id} c={c} token={token} huso={huso(c.brand_id)}
-                      onCambio={() => setTick((n) => n + 1)} onAtendido={() => atender(c.id)} />
+                      onCambio={() => setTick((n) => n + 1)} onAtendido={(k) => atender(c.id, k)} />
                   ))}
                 </ul>
               </section>
             ))}
           </div>
         </>
+      )}
+      {errorDeshacer && <Aviso tono="error">No se pudo deshacer: {errorDeshacer}</Aviso>}
+      {deshacer && (
+        <div role="status" className="fixed bottom-20 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900/95 px-4 py-2.5 text-xs text-zinc-200 shadow-2xl">
+          <span>{deshacer.autor}: {CIERRE[deshacer.kind]}</span>
+          <button onClick={reabrir} className="flex items-center gap-1 font-bold text-accent hover:underline">
+            <RotateCcw className="w-3.5 h-3.5" /> Deshacer
+          </button>
+        </div>
       )}
     </div>
   );
@@ -205,7 +242,9 @@ function CabeceraPublicacion({ c, post, nombre, huso }: { c: Comentario; post?: 
 }
 
 function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
-  c: Comentario; token: string; huso: string | null; onCambio: () => void; onAtendido: () => void;
+  c: Comentario; token: string; huso: string | null; onCambio: () => void;
+  /** Atendido: con el tipo de cierre si se cerró (se puede deshacer); sin él si se respondió. */
+  onAtendido: (cierre?: TipoCierre) => void;
 }) {
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState<null | 'publica' | 'privada'>(null);
@@ -229,7 +268,7 @@ function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
     setCerrando(kind ?? 'reabrir'); setError(null);
     try {
       await cerrarComentario(token, c.id, kind);
-      if (kind) onAtendido(); else onCambio();
+      if (kind) onAtendido(kind); else onCambio();
     } catch (e) { setError(e instanceof ErrorApi ? e.message : String(e)); }
     finally { setCerrando(null); }
   };
