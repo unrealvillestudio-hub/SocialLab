@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { BellRing, ExternalLink, MessageCircle, X } from 'lucide-react';
 import {
   cambiarRecomendacion, cambiarTarjeta, comentarios as leerComentarios, ops, pedirConsejo as pedirConsejoApi, tarjetas as leerTarjetas,
-  type Comentario, type EnVivo, type Marca, type Recomendacion, type RespEnVivo, type Tarjeta,
+  type Comentario, type EnVivo, type Marca, type PedidoConsejo, type Recomendacion, type RespEnVivo, type Tarjeta,
 } from '../api';
 import { agruparTarjetas, claveDeCuenta, marcaDePill } from '../asesor';
 import {
@@ -53,7 +53,11 @@ interface Pulso {
   recomendaciones: Recomendacion[]; recosPorPost: Map<string, Recomendacion[]>; recosPorCuenta: Map<string, Recomendacion[]>;
   recosAbiertas: Set<string>;
   marcarRecomendacion: (id: string, status: 'seguida' | 'descartada', enviado?: string) => Promise<void>;
-  pedirConsejo: (marca: string) => Promise<void>;
+  /** Consejo a pedido: de la marca entera o, con `postCommentId`, sobre ese comentario. */
+  pedirConsejo: (marca: string, postCommentId?: number) => Promise<void>;
+  /** Por comentario: la recomendación nueva del asesor y cómo va el último pedido de consejo (Sam, 2026-10-26). */
+  recoPorComentario: Map<number, Recomendacion>;
+  pedidoPorComentario: Map<number, PedidoConsejo['estado']>;
   /** Las marcas de la pill de un foco: tarjetas + recomendaciones. */
   marcasDePill: (foco: Exclude<FocoAsesor, null>) => { severity: string; status: string }[];
 }
@@ -95,6 +99,7 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
   const [comentariosPorId, setComentariosPorId] = useState<Map<number, Comentario>>(new Map());
   const [tickTarjetas, setTickTarjetas] = useState(0);
   const [listaRecos, setListaRecos] = useState<Recomendacion[]>([]);
+  const [pedidos, setPedidos] = useState<Map<number, PedidoConsejo['estado']>>(new Map());
   // Una recomendación no tiene «vista» en la base: lo que este operador ya abrió se recuerda en su navegador.
   const [recosAbiertas, setRecosAbiertas] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('sociallab.recos_abiertas') ?? '[]')); } catch { return new Set(); }
@@ -187,7 +192,11 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     if (tick === 0) return;
     let activo = true;
     leerTarjetas(token, { marca: marca || undefined })
-      .then((r) => { if (activo) { setListaTarjetas(r.tarjetas ?? []); setListaRecos(r.recomendaciones ?? []); } })
+      .then((r) => {
+        if (!activo) return;
+        setListaTarjetas(r.tarjetas ?? []); setListaRecos(r.recomendaciones ?? []);
+        setPedidos(new Map((r.pedidos ?? []).map((p) => [p.post_comment_id, p.estado])));
+      })
       .catch((e) => console.error('[pulso] tarjetas del asesor:', e instanceof Error ? e.message : e));
     return () => { activo = false; };
   }, [token, marca, tick, tickTarjetas]);
@@ -226,7 +235,16 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     await cambiarRecomendacion(token, id, status, enviado);
     setListaRecos((xs) => xs.filter((x) => x.id !== id));
   }, [token]);
-  const pedirConsejo = useCallback(async (m: string) => { await pedirConsejoApi(token, m); }, [token]);
+  const pedirConsejo = useCallback(async (m: string, postCommentId?: number) => {
+    await pedirConsejoApi(token, m, postCommentId);
+    // En el acto, «consejo pedido»; la próxima lectura (cada minuto) trae el estado real.
+    if (postCommentId != null) setPedidos((p) => new Map(p).set(postCommentId, 'pendiente'));
+  }, [token]);
+  const recoPorComentario = useMemo(() => {
+    const m = new Map<number, Recomendacion>();
+    for (const r of listaRecos) if (r.post_comment_id != null && !m.has(r.post_comment_id)) m.set(r.post_comment_id, r);
+    return m;
+  }, [listaRecos]);
 
   const marcasDePill = useCallback((foco: Exclude<FocoAsesor, null>) => {
     const ts = 'post' in foco ? grupos.porPost.get(foco.post) ?? [] : grupos.porCuenta.get(foco.cuenta) ?? [];
@@ -251,12 +269,12 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     tarjetas: listaTarjetas,
     tarjetasNuevas: listaTarjetas.filter((t) => t.status === 'nueva').length + listaRecos.filter((r) => !recosAbiertas.has(r.id)).length,
     recomendaciones: listaRecos, recosPorPost: gruposRecos.porPost, recosPorCuenta: gruposRecos.porCuenta, recosAbiertas,
-    marcarRecomendacion, pedirConsejo, marcasDePill,
+    marcarRecomendacion, pedirConsejo, marcasDePill, recoPorComentario, pedidoPorComentario: pedidos,
     tarjetasPorPost: grupos.porPost, tarjetasPorCuenta: grupos.porCuenta, comentariosPorId,
     abrirAsesor, marcarTarjeta, recargarTarjetas: () => setTickTarjetas((n) => n + 1),
   }), [vivo, errorVivo, cargandoVivo, leidoVivoEn, pendientesPorPost, pendientes, nuevos, onAtender,
     listaTarjetas, grupos, comentariosPorId, abrirAsesor, marcarTarjeta,
-    listaRecos, gruposRecos, recosAbiertas, marcarRecomendacion, pedirConsejo, marcasDePill]);
+    listaRecos, gruposRecos, recosAbiertas, marcarRecomendacion, pedirConsejo, marcasDePill, recoPorComentario, pedidos]);
 
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>;
 }

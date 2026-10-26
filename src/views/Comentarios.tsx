@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, MessageCircle, RefreshCw, Send } from 'lucide-react';
+import { Lock, MessageCircle, RefreshCw, Send, Sparkles } from 'lucide-react';
 import {
   comentarios as leerComentarios, responderComentario, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
 } from '../api';
 import { Aviso, Cargando, Chip, cn, etiquetaPlataforma, fechaHora } from '../ui/components';
+import { usePulso } from '../ui/Pulso';
 
 /**
  * COMENTARIOS · la bandeja de interacción (Fase 3; endpoint `/api/comments`, SocialLab #14).
@@ -13,6 +14,10 @@ import { Aviso, Cargando, Chip, cn, etiquetaPlataforma, fechaHora } from '../ui/
  * salir y se verifica leyéndola desde la plataforma: la tarjeta muestra si quedó enviada, verificada o
  * fallida, y quién la pidió. Una respuesta la escribe y la envía una persona; aquí no hay respuestas
  * automáticas.
+ *
+ * EL ASESOR EN LA TARJETA (Sam, 2026-10-26): si el asesor dejó una sugerencia para el comentario, se ve
+ * aquí y su borrador se puede usar; si no, «Pedir consejo al asesor» se lo pide sobre ESE comentario
+ * (el asesor lo atiende aunque tenga más de 72 h). El consejo llega en el siguiente ciclo, cada 15 min.
  */
 
 const DIA = 86_400_000;
@@ -145,18 +150,31 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
   const privada = c.privada;
   const puedeResponder = !c.from_brand && c.estado !== 'en_curso';
   const espera_ = c.estado === 'sin_responder' || c.estado === 'fallida';
+  const { recoPorComentario, pedidoPorComentario, pedirConsejo, marcarRecomendacion } = usePulso();
+  const reco = recoPorComentario.get(c.id);
+  const pedido = pedidoPorComentario.get(c.id);
+  // La recomendación cuyo borrador se cargó en la caja: al enviar se marca seguida con lo que salió.
+  const [deLaReco, setDeLaReco] = useState<string | null>(null);
+  const [pidiendo, setPidiendo] = useState(false);
 
   const enviar = async (enPrivado: boolean) => {
     setEnviando(enPrivado ? 'privada' : 'publica'); setError(null);
     try {
       await responderComentario(token, c.id, texto, enPrivado);
-      setTexto('');
+      if (deLaReco) await marcarRecomendacion(deLaReco, 'seguida', texto).catch((e) => console.error('[comentarios] marcar seguida:', e));
+      setTexto(''); setDeLaReco(null);
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : String(e));
     } finally {
       setEnviando(null);
       onCambio();
     }
+  };
+  const pedir = async () => {
+    setPidiendo(true); setError(null);
+    try { await pedirConsejo(c.brand_id, c.id); }
+    catch (e) { setError(e instanceof ErrorApi ? e.message : String(e)); }
+    finally { setPidiendo(false); }
   };
 
   return (
@@ -205,9 +223,41 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
         </ul>
       )}
 
+      {puedeResponder && reco && (
+        <div className="rounded-lg border border-accent/40 bg-accent/[0.04] p-2.5 space-y-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-accent">
+            <Sparkles className="w-3 h-3" /> Sugerencia del asesor
+          </div>
+          <p className="text-xs text-zinc-100">{reco.recommendation}</p>
+          {reco.draft && (
+            <>
+              <p className="texto-editorial text-xs text-zinc-300 border-l-2 border-accent/40 pl-2 whitespace-pre-line">{reco.draft}</p>
+              <button onClick={() => { setTexto(reco.draft ?? ''); setDeLaReco(reco.id); }}
+                className="px-3 py-1.5 rounded-lg border border-accent/50 text-accent text-[11px] font-bold">
+                Usar el borrador
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {puedeResponder && !reco && (
+        pedido === 'pendiente' ? (
+          <p className="flex items-center gap-1.5 text-[11px] text-accent">
+            <Sparkles className="w-3.5 h-3.5" /> Consejo pedido: el asesor lo deja aquí en unos minutos.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={pedir} disabled={pidiendo}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/40 text-accent text-[11px] font-bold hover:bg-accent/10 disabled:opacity-40">
+              <Sparkles className="w-3.5 h-3.5" /> {pidiendo ? 'Pidiendo…' : 'Pedir consejo al asesor'}
+            </button>
+            {pedido === 'sin_consejo' && <span className="text-[10px] text-zinc-500">La última vez el asesor no dejó consejo; puedes volver a pedirlo.</span>}
+          </div>
+        )
+      )}
       {puedeResponder && (
         <div className="flex flex-col sm:flex-row sm:items-end gap-2">
-          <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={2} placeholder="Escribe la respuesta de la marca…"
+          <textarea value={texto} onChange={(e) => { setTexto(e.target.value); if (!e.target.value.trim()) setDeLaReco(null); }} rows={2} placeholder="Escribe la respuesta de la marca…"
             className="entrada flex-1 resize-y" />
           <button onClick={() => enviar(false)} disabled={!!enviando || !texto.trim()}
             className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-accent text-black text-xs font-bold disabled:opacity-40">

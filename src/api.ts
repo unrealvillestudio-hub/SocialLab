@@ -164,7 +164,9 @@ export interface Recomendacion {
   sent_text: string | null; created_at: string;
   accion: { label: string; via: 'api' | 'app_nativa' | 'interna' };
 }
-export interface RespTarjetas { truncado: boolean; nuevas: number; tarjetas: Tarjeta[]; recomendaciones?: Recomendacion[] }
+/** Cómo va el último pedido de consejo sobre un comentario (sin nada del despertar: ni costo ni modelo). */
+export interface PedidoConsejo { post_comment_id: number; estado: 'pendiente' | 'sin_consejo' | 'con_consejo' }
+export interface RespTarjetas { truncado: boolean; nuevas: number; tarjetas: Tarjeta[]; recomendaciones?: Recomendacion[]; pedidos?: PedidoConsejo[] }
 
 export async function tarjetas(token: string, params: Record<string, string | undefined> = {}): Promise<RespTarjetas> {
   const qs = new URLSearchParams();
@@ -189,11 +191,14 @@ export async function cambiarRecomendacion(token: string, id: string, status: 's
   }));
 }
 
-/** Pone en cola un despertar del asesor para una marca. 409 = ya hay uno en cola. */
-export async function pedirConsejo(token: string, marca: string): Promise<unknown> {
+/**
+ * Pone en cola un despertar del asesor para una marca; con `postCommentId`, consejo sobre ese comentario
+ * (Sam, 2026-10-26). 409 = ya hay uno en cola.
+ */
+export async function pedirConsejo(token: string, marca: string, postCommentId?: number): Promise<unknown> {
   return leer(await fetch('/api/tarjetas', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ tipo: 'despertar', marca }),
+    body: JSON.stringify({ tipo: 'despertar', marca, ...(postCommentId != null ? { post_comment_id: postCommentId } : {}) }),
   }));
 }
