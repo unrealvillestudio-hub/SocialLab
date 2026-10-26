@@ -111,7 +111,9 @@ export interface ResumenCuenta {
 
 // ── Comentarios (`/api/comments`, SocialLab #14) ──────────────────────────────
 
-export type EstadoComentario = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'cerrado' | 'de_la_marca';
+export type EstadoComentario = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'cerrado' | 'allegado' | 'de_la_marca';
+/** Cuenta del equipo o allegada de la marca (Sam, 2026-10-26): sus comentarios no esperan respuesta. */
+export type Relacion = 'equipo' | 'allegado';
 /** Cómo se cierra un comentario sin responderlo desde el tablero (Sam, 2026-10-26). */
 export type TipoCierre = 'hecho' | 'descartado' | 'contestado_fuera';
 export interface CierreComentario { kind: TipoCierre; closed_by: string; closed_at: string }
@@ -131,6 +133,8 @@ export interface Comentario {
   privada?: { puede: boolean; motivo: string | null; hasta: string | null };
   /** El cierre del comentario, si el operador lo cerró sin responderlo. */
   cierre?: CierreComentario | null;
+  /** Si quien lo escribió está marcado como allegado o del equipo. */
+  allegado?: Relacion | null;
 }
 export interface RespComentarios {
   ventana: { desde: string; hasta: string }; total: number; pendientes: number; truncado: boolean; comentarios: Comentario[];
@@ -156,6 +160,15 @@ export async function cerrarComentario(token: string, postCommentId: number, kin
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(kind ? { tipo: 'cierre', post_comment_id: postCommentId, kind } : { tipo: 'reabrir', post_comment_id: postCommentId }),
+  }));
+}
+
+/** Marca a quien escribió el comentario como allegado o del equipo (`relation`), o quita la marca (`null`). */
+export async function marcarAllegado(token: string, postCommentId: number, relation: Relacion | null): Promise<unknown> {
+  return leer(await fetch('/api/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(relation ? { tipo: 'allegado', post_comment_id: postCommentId, relation } : { tipo: 'quitar_allegado', post_comment_id: postCommentId }),
   }));
 }
 

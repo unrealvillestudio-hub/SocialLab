@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, ExternalLink, Lock, MessageCircle, RefreshCw, RotateCcw, Send, X } from 'lucide-react';
+import { Check, ExternalLink, Lock, MessageCircle, RefreshCw, RotateCcw, Send, Users, X } from 'lucide-react';
 import {
-  comentarios as leerComentarios, responderComentario, cerrarComentario, ops, ErrorApi,
+  comentarios as leerComentarios, responderComentario, cerrarComentario, marcarAllegado, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
-  type TipoCierre,
+  type TipoCierre, type Relacion,
 } from '../api';
 import { Aviso, Cargando, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, fechaHora, ChevronAsesor } from '../ui/components';
 import { usePulso } from '../ui/Pulso';
@@ -27,6 +27,9 @@ import { usePulso } from '../ui/Pulso';
  *
  * DESHACER (Sam, 2026-10-26): un cierre se puede deshacer durante `SEGUNDOS_DESHACER` desde el aviso que aparece abajo,
  * sin ir a «ver atendidos». Una respuesta enviada no se deshace: ya salió a la plataforma.
+ *
+ * ALLEGADOS (Sam, 2026-10-26): «Allegado» o «Equipo» marca a quien escribió el comentario; sus comentarios dejan de
+ * esperar respuesta (estado `allegado`) y el asesor no los considera. Necesita el autor: en Facebook a menudo no llega.
  */
 
 const DIA = 86_400_000;
@@ -39,6 +42,7 @@ const ESTADO: Record<EstadoComentario, { etiqueta: string; clase: string }> = {
   en_curso: { etiqueta: 'respuesta en curso', clase: 'bg-sky-500/15 text-sky-300' },
   respondido: { etiqueta: 'respondido', clase: 'bg-emerald-500/15 text-emerald-300' },
   cerrado: { etiqueta: 'atendido', clase: 'bg-zinc-700/60 text-zinc-300' },
+  allegado: { etiqueta: 'allegado', clase: 'bg-violet-500/15 text-violet-300' },
   de_la_marca: { etiqueta: 'de la marca', clase: 'bg-zinc-700/60 text-zinc-300' },
 };
 
@@ -46,6 +50,10 @@ const ESTADO: Record<EstadoComentario, { etiqueta: string; clase: string }> = {
 const PENDIENTES: ReadonlySet<EstadoComentario> = new Set(['sin_responder', 'fallida']);
 
 const CIERRE: Record<TipoCierre, string> = { hecho: 'hecho', descartado: 'descartado', contestado_fuera: 'contestado fuera de SocialLab' };
+const RELACION: Record<Relacion, string> = { allegado: 'cuenta allegada', equipo: 'cuenta del equipo' };
+
+/** Lo que se acaba de hacer en una tarjeta y cómo deshacerlo. */
+interface Hecho { etiqueta: string; deshacer: () => Promise<unknown> }
 
 const ESTADO_RESPUESTA: Record<RespuestaComentario['status'], { etiqueta: string; clase: string }> = {
   requested: { etiqueta: 'pedida', clase: 'text-sky-300' },
@@ -114,27 +122,27 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
     }
     return [...m.entries()];
   }, [visibles]);
-  const [deshacer, setDeshacer] = useState<{ id: number; autor: string; kind: TipoCierre } | null>(null);
+  const [deshacer, setDeshacer] = useState<{ id: number; autor: string; hecho: Hecho } | null>(null);
   const [errorDeshacer, setErrorDeshacer] = useState<string | null>(null);
   useEffect(() => {
     if (!deshacer) return;
     const t = setTimeout(() => setDeshacer(null), SEGUNDOS_DESHACER * 1000);
     return () => clearTimeout(t);
   }, [deshacer]);
-  const atender = (id: number, cierre?: TipoCierre) => {
+  const atender = (id: number, hecho?: Hecho) => {
     setAtendidos((s) => new Set(s).add(id)); setTick((n) => n + 1);
-    if (cierre) {
+    if (hecho) {
       const c = data?.comentarios.find((x) => x.id === id);
       setErrorDeshacer(null);
-      setDeshacer({ id, autor: c?.author_name ?? 'el comentario', kind: cierre });
+      setDeshacer({ id, autor: c?.author_name ?? 'el comentario', hecho });
     }
   };
   const reabrir = async () => {
     if (!deshacer) return;
-    const { id } = deshacer;
+    const { id, hecho } = deshacer;
     setDeshacer(null);
     try {
-      await cerrarComentario(token, id, null);
+      await hecho.deshacer();
       setAtendidos((s) => { const n = new Set(s); n.delete(id); return n; });
     } catch (e) { setErrorDeshacer(e instanceof ErrorApi ? e.message : String(e)); }
     finally { setTick((n) => n + 1); }
@@ -158,7 +166,7 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
         ))}
         <label className="order-last sm:order-none basis-full sm:basis-auto flex items-center gap-1.5 text-[11px] text-zinc-400 sm:ml-2 py-1">
           <input type="checkbox" checked={verAtendidos} onChange={(e) => setVerAtendidos(e.target.checked)} />
-          ver atendidos (respondidos y cerrados)
+          ver atendidos (respondidos, cerrados y allegados)
         </label>
         <label className="order-last sm:order-none basis-full sm:basis-auto flex items-center gap-1.5 text-[11px] text-zinc-400 py-1">
           <input type="checkbox" checked={verDeLaMarca} onChange={(e) => setVerDeLaMarca(e.target.checked)} />
@@ -206,7 +214,7 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
       {errorDeshacer && <Aviso tono="error">No se pudo deshacer: {errorDeshacer}</Aviso>}
       {deshacer && (
         <div role="status" className="fixed bottom-20 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900/95 px-4 py-2.5 text-xs text-zinc-200 shadow-2xl">
-          <span>{deshacer.autor}: {CIERRE[deshacer.kind]}</span>
+          <span>{deshacer.autor}: {deshacer.hecho.etiqueta}</span>
           <button onClick={reabrir} className="flex items-center gap-1 font-bold text-accent hover:underline">
             <RotateCcw className="w-3.5 h-3.5" /> Deshacer
           </button>
@@ -243,8 +251,8 @@ function CabeceraPublicacion({ c, post, nombre, huso }: { c: Comentario; post?: 
 
 function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
   c: Comentario; token: string; huso: string | null; onCambio: () => void;
-  /** Atendido: con el tipo de cierre si se cerró (se puede deshacer); sin él si se respondió. */
-  onAtendido: (cierre?: TipoCierre) => void;
+  /** Atendido: con cómo deshacerlo si se cerró o se marcó allegado; sin nada si se respondió. */
+  onAtendido: (hecho?: Hecho) => void;
 }) {
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState<null | 'publica' | 'privada'>(null);
@@ -261,14 +269,25 @@ function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
   const [deLaReco, setDeLaReco] = useState<string | null>(null);
   const [pidiendo, setPidiendo] = useState(false);
   const [descartando, setDescartando] = useState(false);
-  const [cerrando, setCerrando] = useState<TipoCierre | 'reabrir' | null>(null);
+  const [cerrando, setCerrando] = useState<TipoCierre | Relacion | 'reabrir' | 'quitar' | null>(null);
+
+  // Marcar a quien escribió como allegado o del equipo (Sam, 2026-10-26); con `null`, quitar la marca.
+  const allegado = async (relation: Relacion | null) => {
+    setCerrando(relation ?? 'quitar'); setError(null);
+    try {
+      await marcarAllegado(token, c.id, relation);
+      if (relation) onAtendido({ etiqueta: RELACION[relation], deshacer: () => marcarAllegado(token, c.id, null) });
+      else onCambio();
+    } catch (e) { setError(e instanceof ErrorApi ? e.message : String(e)); }
+    finally { setCerrando(null); }
+  };
 
   // Cerrar sin responder (Sam, 2026-10-26): sale de la bandeja y el asesor no lo vuelve a proponer. O reabrir.
   const cerrar = async (kind: TipoCierre | null) => {
     setCerrando(kind ?? 'reabrir'); setError(null);
     try {
       await cerrarComentario(token, c.id, kind);
-      if (kind) onAtendido(kind); else onCambio();
+      if (kind) onAtendido({ etiqueta: CIERRE[kind], deshacer: () => cerrarComentario(token, c.id, null) }); else onCambio();
     } catch (e) { setError(e instanceof ErrorApi ? e.message : String(e)); }
     finally { setCerrando(null); }
   };
@@ -406,7 +425,16 @@ function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
           </button>
         </div>
       )}
-      {!c.from_brand && !c.cierre && c.estado !== 'respondido' && c.estado !== 'en_curso' && (
+      {c.allegado && (
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
+          <span><Users className="inline w-3 h-3 mr-0.5" /> {c.author_name}: <b className="text-zinc-300">{RELACION[c.allegado]}</b>. Sus comentarios no esperan respuesta.</span>
+          <button onClick={() => allegado(null)} disabled={!!cerrando}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">
+            <RotateCcw className="w-3 h-3" /> {cerrando === 'quitar' ? 'Quitando…' : 'Quitar la marca'}
+          </button>
+        </div>
+      )}
+      {!c.from_brand && !c.cierre && !c.allegado && c.estado !== 'respondido' && c.estado !== 'en_curso' && (
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
           <span className="text-[10px] text-zinc-600 mr-1">Sin responder desde aquí:</span>
           <button onClick={() => cerrar('hecho')} disabled={!!cerrando} title="Ya se hizo (p. ej. se fijó en la app): sale de la bandeja"
@@ -421,6 +449,19 @@ function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">
             <X className="w-3.5 h-3.5" /> {cerrando === 'descartado' ? 'Descartando…' : 'Descartar'}
           </button>
+          {c.author_name && (
+            <>
+              <span className="text-zinc-700">·</span>
+              <button onClick={() => allegado('allegado')} disabled={!!cerrando} title={`${c.author_name} es amistad o familia: sus comentarios no esperan respuesta`}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-violet-300 hover:bg-violet-500/10 disabled:opacity-40">
+                <Users className="w-3.5 h-3.5" /> {cerrando === 'allegado' ? 'Marcando…' : 'Allegado'}
+              </button>
+              <button onClick={() => allegado('equipo')} disabled={!!cerrando} title={`${c.author_name} es del equipo: sus comentarios no esperan respuesta`}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-violet-300 hover:bg-violet-500/10 disabled:opacity-40">
+                {cerrando === 'equipo' ? 'Marcando…' : 'Equipo'}
+              </button>
+            </>
+          )}
         </div>
       )}
       {c.estado === 'fallida' && (
