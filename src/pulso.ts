@@ -9,14 +9,17 @@
  *   · EN VIVO — el listado de la plataforma (MCP de Meta) trae me gusta y comentarios en la misma
  *     llamada. Se relee cada minuto con la pestaña visible.
  *   · MEDIDO — SignalLab (`content.post_metric_snapshots`) mide alcance, vistas, guardados, etc. a su
- *     ritmo: cada 15 min las primeras 6 h, luego a las 24 h, 72 h y 7 días.
+ *     ritmo (desde #489: cada 15 min el primer día, cada hora hasta 72 h, cada 6 h hasta 7 días).
  * Cuando las dos traen la misma métrica, gana la más reciente: la en vivo.
+ *
+ * Cada pill sabe CUÁNDO se leyó su valor (`leido_en`): un «alcance 120» de hace 5 horas no se presenta
+ * como si fuera de ahora (pedido de Sam, 2026-10-26).
  */
 
 export interface MetricaMedida { metric: string; value: number; fetched_at?: string }
 export interface Contador { metric: string; value: number }
 export type Fuente = 'vivo' | 'medido';
-export interface MetricaPill { metric: string; value: number; fuente: Fuente }
+export interface MetricaPill { metric: string; value: number; fuente: Fuente; leido_en: string | null }
 
 /** La métrica que cuenta comentarios. Es vocabulario de la plataforma (SignalLab y Meta la llaman igual). */
 export const METRICA_COMENTARIOS = 'comments';
@@ -25,15 +28,35 @@ export const METRICA_COMENTARIOS = 'comments';
  * Une lo medido con lo leído en vivo. Lo en vivo sustituye a la misma métrica medida y se añade si
  * SignalLab todavía no la midió. El orden es el de lo medido, con lo nuevo al final.
  */
-export function combinarMetricas(medidas: readonly MetricaMedida[], vivo: readonly Contador[] | undefined): MetricaPill[] {
+export function combinarMetricas(
+  medidas: readonly MetricaMedida[], vivo: readonly Contador[] | undefined, vivoLeidoEn: string | null = null,
+): MetricaPill[] {
   const enVivo = new Map((vivo ?? []).map((c) => [c.metric, c.value]));
   const out: MetricaPill[] = medidas.map((m) => enVivo.has(m.metric)
-    ? { metric: m.metric, value: enVivo.get(m.metric)!, fuente: 'vivo' as const }
-    : { metric: m.metric, value: Number(m.value), fuente: 'medido' as const });
+    ? { metric: m.metric, value: enVivo.get(m.metric)!, fuente: 'vivo' as const, leido_en: vivoLeidoEn }
+    : { metric: m.metric, value: Number(m.value), fuente: 'medido' as const, leido_en: m.fetched_at ?? null });
   for (const [metric, value] of enVivo) {
-    if (!medidas.some((m) => m.metric === metric)) out.push({ metric, value, fuente: 'vivo' });
+    if (!medidas.some((m) => m.metric === metric)) out.push({ metric, value, fuente: 'vivo', leido_en: vivoLeidoEn });
   }
   return out;
+}
+
+/** «hace 40 s», «hace 12 min», «hace 3 h», «hace 2 d». Sin fecha, null: nunca un «ahora» inventado. */
+export function haceCuanto(iso: string | null | undefined, ahora: number): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const s = Math.max(0, Math.round((ahora - t) / 1000));
+  if (s < 60) return `hace ${s} s`;
+  if (s < 3600) return `hace ${Math.round(s / 60)} min`;
+  if (s < 48 * 3600) return `hace ${Math.round(s / 3600)} h`;
+  return `hace ${Math.round(s / 86400)} d`;
+}
+
+/** La lectura medida más reciente de un post: SignalLab lee sus métricas juntas, así que basta una fecha. */
+export function ultimaLecturaMedida(pills: readonly MetricaPill[]): string | null {
+  return pills.filter((p) => p.fuente === 'medido' && p.leido_en)
+    .reduce<string | null>((m, p) => (m === null || p.leido_en! > m ? p.leido_en : m), null);
 }
 
 export interface LecturaComentarios { platform_post_id: string; comments: number }

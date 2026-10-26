@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { cn } from './components';
 import { Sparkles } from 'lucide-react';
-import { METRICA_COMENTARIOS } from '../pulso';
+import { haceCuanto, METRICA_COMENTARIOS } from '../pulso';
 import { severidadMayor } from '../asesor';
 
 /**
@@ -34,8 +34,8 @@ const etiqueta = (m: string) => m.replace(/_/g, ' ');
 
 interface AccionComentarios { pendientes: number; nuevo: boolean; onClick: () => void }
 
-function Pill({ metric, value, fuente, comentarios }: {
-  metric: string; value: number; fuente?: 'vivo' | 'medido'; comentarios?: AccionComentarios;
+function Pill({ metric, value, fuente, leidoEn, comentarios }: {
+  metric: string; value: number; fuente?: 'vivo' | 'medido'; leidoEn?: string | null; comentarios?: AccionComentarios;
 }) {
   const previo = useRef<number | null>(null);
   const [premio, setPremio] = useState<{ delta: number; n: number } | null>(null);
@@ -53,6 +53,7 @@ function Pill({ metric, value, fuente, comentarios }: {
   const Raiz = comentarios ? 'button' : 'span';
   const titulo = `${etiqueta(metric)}: ${value.toLocaleString('en-US')}`
     + (fuente === 'vivo' ? ' · en vivo, leído de la plataforma' : fuente === 'medido' ? ' · medido por SignalLab' : '')
+    + (haceCuanto(leidoEn, Date.now()) ? ` ${haceCuanto(leidoEn, Date.now())}` : '')
     + (comentarios ? ` · ${comentarios.pendientes ? `${comentarios.pendientes} sin responder · ` : ''}abrir la bandeja de este post` : '');
   return (
     <Raiz
@@ -82,13 +83,13 @@ function Pill({ metric, value, fuente, comentarios }: {
  * `comentarios` convierte la pill de comentarios en el acceso a la bandeja de ese post.
  */
 export function Pills({ metricas, sinMedir = 'sin medir', comentarios }: {
-  metricas: { metric: string; value: number; fuente?: 'vivo' | 'medido' }[]; sinMedir?: string; comentarios?: AccionComentarios;
+  metricas: { metric: string; value: number; fuente?: 'vivo' | 'medido'; leido_en?: string | null }[]; sinMedir?: string; comentarios?: AccionComentarios;
 }) {
   if (metricas.length === 0) return <span className="text-[10px] font-mono text-zinc-600">{sinMedir}</span>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {metricas.map((m) => (
-        <Pill key={m.metric} metric={m.metric} value={Number(m.value)} fuente={m.fuente}
+        <Pill key={m.metric} metric={m.metric} value={Number(m.value)} fuente={m.fuente} leidoEn={m.leido_en}
           comentarios={m.metric === METRICA_COMENTARIOS ? comentarios : undefined} />
       ))}
     </div>

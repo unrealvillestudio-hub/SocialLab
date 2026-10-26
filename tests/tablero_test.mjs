@@ -18,7 +18,7 @@ import {
   verificarSesion, alcanceDe, marcasConsultadas, ventana, contar, formatoDe, normalizarRespuesta,
   lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta, canalesPorMarca, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
-import { combinarMetricas, aumentosDeComentarios, cuentasActivas, planDeLectura, fusionarLectura } from '../src/pulso.ts';
+import { combinarMetricas, aumentosDeComentarios, cuentasActivas, planDeLectura, fusionarLectura, haceCuanto, ultimaLecturaMedida } from '../src/pulso.ts';
 
 let fallos = 0;
 function test(nombre, fn) {
@@ -160,16 +160,27 @@ test('la lectura en vivo trae me gusta y comentarios con el nombre de las métri
   assert.deepEqual(fb.contadores, [{ metric: 'likes', value: 0 }, { metric: 'comments', value: 2 }]);
 });
 
-test('pills: lo en vivo sustituye a lo medido en la misma métrica y se añade si falta', () => {
+test('pills: lo en vivo sustituye a lo medido en la misma métrica y se añade si falta; cada una con su hora de lectura', () => {
   const c = combinarMetricas(
-    [{ metric: 'reach', value: 100 }, { metric: 'likes', value: 10 }],
-    [{ metric: 'likes', value: 12 }, { metric: 'comments', value: 3 }]);
+    [{ metric: 'reach', value: 100, fetched_at: '2026-10-26T08:00:00Z' }, { metric: 'likes', value: 10, fetched_at: '2026-10-26T08:00:00Z' }],
+    [{ metric: 'likes', value: 12 }, { metric: 'comments', value: 3 }], '2026-10-26T10:00:00Z');
   assert.deepEqual(c, [
-    { metric: 'reach', value: 100, fuente: 'medido' },
-    { metric: 'likes', value: 12, fuente: 'vivo' },
-    { metric: 'comments', value: 3, fuente: 'vivo' },
+    { metric: 'reach', value: 100, fuente: 'medido', leido_en: '2026-10-26T08:00:00Z' },
+    { metric: 'likes', value: 12, fuente: 'vivo', leido_en: '2026-10-26T10:00:00Z' },
+    { metric: 'comments', value: 3, fuente: 'vivo', leido_en: '2026-10-26T10:00:00Z' },
   ]);
-  assert.deepEqual(combinarMetricas([{ metric: 'reach', value: 5 }], undefined), [{ metric: 'reach', value: 5, fuente: 'medido' }]);
+  assert.deepEqual(combinarMetricas([{ metric: 'reach', value: 5 }], undefined), [{ metric: 'reach', value: 5, fuente: 'medido', leido_en: null }]);
+  assert.equal(ultimaLecturaMedida(c), '2026-10-26T08:00:00Z', 'la hora de lo medido, no la de lo en vivo');
+});
+
+test('leído hace X: segundos, minutos, horas, días; sin fecha no inventa', () => {
+  const ahora = Date.parse('2026-10-26T10:00:00Z');
+  assert.equal(haceCuanto('2026-10-26T09:59:20Z', ahora), 'hace 40 s');
+  assert.equal(haceCuanto('2026-10-26T09:20:00Z', ahora), 'hace 40 min');
+  assert.equal(haceCuanto('2026-10-26T05:00:00Z', ahora), 'hace 5 h');
+  assert.equal(haceCuanto('2026-10-23T10:00:00Z', ahora), 'hace 3 d');
+  assert.equal(haceCuanto(null, ahora), null);
+  assert.equal(haceCuanto('no es fecha', ahora), null);
 });
 
 test('comentario nuevo: sólo cuando el contador sube entre dos lecturas en vivo', () => {

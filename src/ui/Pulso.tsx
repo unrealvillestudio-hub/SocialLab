@@ -6,7 +6,7 @@ import {
 } from '../api';
 import { agruparTarjetas, claveDeCuenta, marcaDePill } from '../asesor';
 import {
-  aumentosDeComentarios, combinarMetricas, cuentasActivas, fusionarLectura, planDeLectura, METRICA_COMENTARIOS, type MetricaMedida,
+  aumentosDeComentarios, combinarMetricas, cuentasActivas, haceCuanto, ultimaLecturaMedida, fusionarLectura, planDeLectura, METRICA_COMENTARIOS, type MetricaMedida,
 } from '../pulso';
 import { PillAsesor, Pills } from './Pills';
 import { etiquetaPlataforma } from './components';
@@ -187,7 +187,7 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     if (tick === 0) return;
     let activo = true;
     leerTarjetas(token, { marca: marca || undefined })
-      .then((r) => { if (activo) { setListaTarjetas(r.tarjetas); setListaRecos(r.recomendaciones ?? []); } })
+      .then((r) => { if (activo) { setListaTarjetas(r.tarjetas ?? []); setListaRecos(r.recomendaciones ?? []); } })
       .catch((e) => console.error('[pulso] tarjetas del asesor:', e instanceof Error ? e.message : e));
     return () => { activo = false; };
   }, [token, marca, tick, tickTarjetas]);
@@ -310,14 +310,26 @@ export function AvisoComentarios({ marcas }: { marcas: Marca[] }) {
 export function PillsDePost({ id, platformPostId, metricas, sinMedir }: {
   id: string; platformPostId: string | null; metricas: MetricaMedida[]; sinMedir?: string;
 }) {
-  const { vivoPorId, pendientesPorPost, nuevosPorPost, atender, marcasDePill, abrirAsesor } = usePulso();
+  const { vivoPorId, pendientesPorPost, nuevosPorPost, atender, marcasDePill, abrirAsesor, leidoVivoEn } = usePulso();
   const enVivo = platformPostId ? vivoPorId.get(platformPostId)?.contadores : undefined;
   const consejos = marcasDePill({ post: id });
+  const pills = combinarMetricas(metricas, enVivo, enVivo && leidoVivoEn ? new Date(leidoVivoEn).toISOString() : null);
+  // Cuándo se leyó lo que mide SignalLab (alcance, vistas…): se lee todo junto, así que basta una fecha por post.
+  const medido = haceCuanto(ultimaLecturaMedida(pills), Date.now());
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {consejos.length > 0 && <PillAsesor tarjetas={consejos} onClick={() => abrirAsesor({ post: id })} />}
-      <Pills metricas={combinarMetricas(metricas, enVivo)} sinMedir={sinMedir}
-        comentarios={{ pendientes: pendientesPorPost.get(id) ?? 0, nuevo: nuevosPorPost.has(id), onClick: () => atender(id) }} />
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {consejos.length > 0 && <PillAsesor tarjetas={consejos} onClick={() => abrirAsesor({ post: id })} />}
+        <Pills metricas={pills} sinMedir={sinMedir}
+          comentarios={{ pendientes: pendientesPorPost.get(id) ?? 0, nuevo: nuevosPorPost.has(id), onClick: () => atender(id) }} />
+      </div>
+      {(medido || enVivo) && (
+        <div className="text-[9px] text-zinc-500">
+          {medido && <>métricas leídas {medido}</>}
+          {medido && enVivo && ' · '}
+          {enVivo && <>me gusta y comentarios en vivo</>}
+        </div>
+      )}
     </div>
   );
 }
