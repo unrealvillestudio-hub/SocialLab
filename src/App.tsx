@@ -9,6 +9,7 @@ import Comentarios from './views/Comentarios';
 import Hoy from './views/Hoy';
 import { AvisoComentarios, ProveedorPulso, usePulso, type FocoAsesor } from './ui/Pulso';
 import Acciones from './views/Acciones';
+import { tramosDeCaja } from './logotipo';
 
 type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'acciones' | 'estadisticas' | 'calendario';
 /** `corta`: la etiqueta de la barra inferior del teléfono, donde caben seis pestañas. */
@@ -21,12 +22,20 @@ const PESTANAS: { id: Pestana; etiqueta: string; corta?: string; icono: React.El
   { id: 'calendario', etiqueta: 'Calendario', corta: 'Agenda', icono: CalendarDays },
 ];
 
-/** El logotipo del lab: «>SocialLab», todo en cian y con el chevron parpadeando (Sam, 2026-10-26). Sustituye al
- *  lockup del estudio (>UNREALVILLE studio): cada lab se firma con su propio nombre. */
+/** El logotipo del lab: «>SocialLab» con el bloque de logotipo de la marca (BP v1.6 `logotype.css_complete`, el
+ *  mismo de unrealvillestudio.com): chevron cian que parpadea, nombre en chalk, Bebas Neue (Sam, 2026-10-26).
+ *  «tablero de operadores» va debajo. Sustituye al lockup del estudio (>UNREALVILLE studio). */
 const Logo = () => (
-  <div className="flex items-baseline gap-2 min-w-0">
-    <span className="lt-logotype lt-lab text-xl"><span className="lt-chevron">&gt;</span><span>SocialLab</span></span>
-    <span className="hidden md:inline text-[10px] text-zinc-500">tablero de operadores</span>
+  <div className="flex flex-col min-w-0 leading-none">
+    <span className="lt-logotype size-lab" aria-label=">SocialLab">
+      <span className="lt-chevron" aria-hidden>&gt;</span>
+      <span className="lt-un" aria-hidden>
+        {tramosDeCaja('SocialLab').map((t, i) => t.minuscula
+          ? <span key={i} className="lt-minuscula">{t.texto}</span>
+          : <span key={i}>{t.texto}</span>)}
+      </span>
+    </span>
+    <span className="mt-1 text-[10px] uppercase tracking-[0.18em] text-zinc-500">tablero de operadores</span>
   </div>
 );
 
