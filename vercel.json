@@ -5,6 +5,9 @@
     },
     "api/publish.ts": {
       "maxDuration": 300
+    },
+    "api/adapt.ts": {
+      "maxDuration": 120
     }
   },
   "redirects": [
