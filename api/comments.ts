@@ -24,6 +24,11 @@
  *                                `cierre` por comentario y su estado pasa a `cerrado`.
  *   POST { tipo: 'reabrir', post_comment_id }   deshace el cierre.
  *                                Responder o cerrar caduca las recomendaciones abiertas de ese comentario.
+ *   POST { tipo: 'comentar', scheduled_post_id, message, recomendacion_id? }
+ *                                publica un comentario de la marca en SU publicación (Sam, 2026-10-26): abrir un debate,
+ *                                mencionar a un aliado. La herramienta es dato (`signal_platforms.post_comment_tool`,
+ *                                unrlvl-meta-mcp #11) y se verifica leyéndolo con `comment_read_tool`. Con
+ *                                `recomendacion_id`, el consejo queda `seguida` con lo que salió (`sent_text`).
  *
  * Autenticación: la misma sesión del tablero (`exigirOperador`). Un comentario de una marca fuera del
  * alcance es 403. Nada de este archivo nombra una plataforma: qué herramienta responde y cuál lee viene
@@ -32,6 +37,7 @@
 import { ventana, enAlcance, marcasConsultadas, TODAS } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida, SB_URL, SB_KEY } from './_opsShared.js';
 import { leerCierres, cerrar, reabrir, caducarRecomendaciones } from './_cierres.js';
+import { idDePublicacion } from './_asesorCore.js';
 import {
   esTipoDeCierre, estados, ordenar, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
   type Comentario, type Respuesta, type Estado, type Clase,
@@ -223,6 +229,73 @@ async function cierre(cuerpo: any, sub: string, alcance: typeof TODAS | string[]
   return r.ok ? { status: 200, body: { cierre: r.cierre } } : { status: r.status, body: { error: r.error } };
 }
 
+/**
+ * Un comentario de la marca en su propia publicación (Sam, 2026-10-26). Alcance antes de escribir; la herramienta sale
+ * de la tabla; se verifica leyéndolo. No hay registro en `comment_replies` (no responde a nadie): queda en el consejo
+ * seguido (`sent_text`, `status_by`) y el colector de SignalLab lo lee como comentario de la marca.
+ */
+async function comentarEnPublicacion(cuerpo: any, sub: string, alcance: typeof TODAS | string[]) {
+  const postId = idDePublicacion(cuerpo?.scheduled_post_id);
+  if (!postId) return { status: 400, body: { error: 'scheduled_post_id inválido' } };
+  let message: string;
+  try { message = mensajeValido(cuerpo?.message); } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
+  const recoId = cuerpo?.recomendacion_id == null || cuerpo.recomendacion_id === '' ? null : String(cuerpo.recomendacion_id);
+  if (recoId !== null && !/^[0-9a-f-]{36}$/i.test(recoId)) return { status: 400, body: { error: 'recomendacion_id inválido' } };
+
+  const [p] = await sbGet<{ brand_id: string; platform: string; platform_post_id: string | null }>(
+    `scheduled_posts?select=brand_id,platform,platform_post_id&id=eq.${postId}`);
+  if (!p || !enAlcance(alcance, p.brand_id)) return { status: 404, body: { error: 'publicación no encontrada' } };
+  if (!p.platform_post_id) return { status: 422, body: { error: 'la publicación no tiene id en la plataforma' } };
+  if (recoId !== null) {
+    const [r] = await sbGet<{ brand_id: string; scheduled_post_id: string | null; status: string }>(
+      `social_advisor_recommendations?select=brand_id,scheduled_post_id,status&id=eq.${recoId}`, 'intel');
+    if (!r || r.brand_id !== p.brand_id || r.scheduled_post_id !== postId) return { status: 404, body: { error: 'recomendación no encontrada' } };
+    if (r.status !== 'nueva') return { status: 409, body: { error: `la recomendación ya está ${r.status}` } };
+  }
+
+  let herramientas: { post_comment_tool: string | null; comment_read_tool: string | null } | undefined;
+  try {
+    [herramientas] = await sbGet<{ post_comment_tool: string | null; comment_read_tool: string | null }>(
+      `signal_platforms?select=post_comment_tool,comment_read_tool&platform=eq.${encodeURIComponent(p.platform)}&active=is.true`, 'intel');
+  } catch (err) {
+    if (err instanceof LecturaFallida && /post_comment_tool|42703|PGRST/.test(err.message)) {
+      return { status: 503, body: { error: 'comentar desde el tablero todavía no está disponible: falta aplicar su migración' } };
+    }
+    throw err;
+  }
+  if (!herramientas?.post_comment_tool || !herramientas.comment_read_tool) {
+    return { status: 422, body: { error: `la plataforma ${p.platform} no permite comentar desde el tablero` } };
+  }
+
+  let id: string | null = null;
+  try {
+    const r = await mcpLeer(herramientas.post_comment_tool, { brand_id: p.brand_id, post_id: p.platform_post_id, message }) as { id?: unknown };
+    id = typeof r?.id === 'string' && r.id ? r.id : null;
+    if (!id) throw new Error('la plataforma no devolvió el id del comentario');
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(`[comentarios] comentar en ${postId} falló: ${error}`);
+    return { status: 502, body: { error: `la plataforma rechazó el comentario: ${error}` } };
+  }
+
+  let motivo: string | null = null;
+  try {
+    const leida = await mcpLeer(herramientas.comment_read_tool, { brand_id: p.brand_id, comment_id: id });
+    if (!verificada(leida, id)) motivo = 'al leerlo, la plataforma no devolvió el comentario';
+  } catch (err) {
+    motivo = `no se pudo leer el comentario: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  if (recoId !== null) {
+    // El comentario ya salió: el consejo queda seguido con lo que se publicó. Un fallo aquí no deshace lo publicado.
+    try {
+      await sbEscribir('PATCH', `social_advisor_recommendations?id=eq.${recoId}&status=eq.nueva`,
+        { status: 'seguida', status_by: sub, status_at: new Date().toISOString(), sent_text: message }, 'intel');
+    } catch (err) { console.error(`[comentarios] marcar seguida ${recoId}: ${err instanceof Error ? err.message : err}`); }
+  }
+  return { status: 200, body: { comentario: { id, verificado: !motivo, motivo } } };
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -237,7 +310,9 @@ export default async function handler(req: any, res: any) {
     const cuerpo = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
     const r = cuerpo?.tipo === 'cierre' || cuerpo?.tipo === 'reabrir'
       ? await cierre(cuerpo, puerta.sesion.sub, puerta.alcance)
-      : await responder(cuerpo, puerta.sesion.sub, puerta.alcance);
+      : cuerpo?.tipo === 'comentar'
+        ? await comentarEnPublicacion(cuerpo, puerta.sesion.sub, puerta.alcance)
+        : await responder(cuerpo, puerta.sesion.sub, puerta.alcance);
     return res.status(r.status).json(r.body);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

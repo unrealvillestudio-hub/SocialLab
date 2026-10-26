@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Copy, ExternalLink, Lock, RefreshCw, Send, X } from 'lucide-react';
-import { ops, responderComentario, ErrorApi, type Marca, type Publicada, type Recomendacion, type RespPublicado, type Tarjeta } from '../api';
+import { ops, responderComentario, comentarEnPublicacion, ErrorApi, type Marca, type Publicada, type Recomendacion, type RespPublicado, type Tarjeta } from '../api';
 import { claveDeCuenta } from '../asesor';
 import { usePulso, PillsDePost, type FocoAsesor } from '../ui/Pulso';
 import { Aviso, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
@@ -10,7 +10,9 @@ import { Aviso, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, etiqueta
  * manager conducido». Cada tarjeta dice qué pasa, por qué importa (con la cifra y su base) y para qué
  * actuar, y trae el botón de la acción:
  *   · `api`        → se hace aquí (responder el comentario, en público o en privado);
- *   · `app_nativa` → enlace a la publicación, para hacerlo en la app de la plataforma;
+ *   · `api` sin comentario (abrir un debate, mencionar a un aliado) → se publica aquí como comentario de la marca en su
+ *                    publicación (2026-10-26, `post_comment_tool`); el texto sigue copiable;
+ *   · `app_nativa` → enlace a la publicación, para hacerlo en la app de la plataforma (hoy: fijar un comentario);
  *   · `interna`    → sólo la ve quien tiene alcance total (aprendizaje del estudio).
  * «Seguir» y «Descartar» quedan registrados con quién y cuándo; «resuelta» la pone el sistema.
  *
@@ -286,8 +288,21 @@ function RecomendacionAsesor({ r, token, enlace }: { r: Recomendacion; token: st
   const [enviando, setEnviando] = useState<null | 'publica' | 'privada' | 'estado'>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
+  const [publicado, setPublicado] = useState<string | null>(null);
   const comentario = r.post_comment_id != null ? comentariosPorId.get(r.post_comment_id) : undefined;
   const responde = r.accion.via === 'api' && r.post_comment_id != null;
+  // Sin comentario al que responder, una acción `api` sobre una publicación se publica aquí como comentario de la marca.
+  const comenta = r.accion.via === 'api' && r.post_comment_id == null && !!r.scheduled_post_id;
+
+  const publicar = async () => {
+    if (!r.scheduled_post_id) return;
+    setEnviando('publica'); setError(null);
+    try {
+      const { comentario: c } = await comentarEnPublicacion(token, r.scheduled_post_id, texto, r.id);
+      setPublicado(c.verificado ? 'Comentario publicado y verificado en la plataforma.' : `Comentario publicado, sin verificar: ${c.motivo ?? ''}`);
+      recargarTarjetas();
+    } catch (e) { setError(e instanceof ErrorApi ? e.message : String(e)); } finally { setEnviando(null); }
+  };
 
   const responder = async (privada: boolean) => {
     if (!r.post_comment_id) return;
@@ -323,10 +338,11 @@ function RecomendacionAsesor({ r, token, enlace }: { r: Recomendacion; token: st
           <span className="texto-editorial text-zinc-100">{comentario.text ?? ''}</span>
         </blockquote>
       )}
-      {(r.draft || responde) && (
+      {(r.draft || responde || comenta) && (
         <div className="space-y-2">
           {r.draft && <p className="text-[10px] text-zinc-500">Borrador del asesor: revísalo y edítalo antes de enviar.</p>}
-          <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} className="entrada w-full resize-y texto-editorial" />
+          <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={3} className="entrada w-full resize-y texto-editorial"
+            placeholder={comenta ? 'El comentario de la marca en su publicación (para mencionar, escribe @ y la cuenta)…' : undefined} />
           <div className="flex flex-col sm:flex-row gap-2">
             {responde ? (
               <>
@@ -338,6 +354,17 @@ function RecomendacionAsesor({ r, token, enlace }: { r: Recomendacion; token: st
                   title={comentario?.privada?.puede === false ? comentario.privada.motivo ?? undefined : 'Mensaje privado a quien comentó'}
                   className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg border border-accent/50 text-accent text-xs font-bold disabled:opacity-40">
                   <Lock className="w-3.5 h-3.5" /> {enviando === 'privada' ? 'Enviando…' : 'En privado'}
+                </button>
+              </>
+            ) : comenta ? (
+              <>
+                <button onClick={publicar} disabled={!!enviando || !texto.trim() || !!publicado}
+                  className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-accent text-black text-xs font-bold disabled:opacity-40">
+                  <Send className="w-3.5 h-3.5" /> {enviando === 'publica' ? 'Publicando…' : 'Publicar en la publicación'}
+                </button>
+                <button onClick={copiar} disabled={!texto.trim()}
+                  className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-bold disabled:opacity-40">
+                  <Copy className="w-3.5 h-3.5" /> {copiado ? 'Copiado' : 'Copiar el texto'}
                 </button>
               </>
             ) : (
@@ -356,6 +383,7 @@ function RecomendacionAsesor({ r, token, enlace }: { r: Recomendacion; token: st
           </div>
         </div>
       )}
+      {publicado && <p className="text-[11px] text-emerald-300">{publicado}</p>}
       {!r.draft && !responde && r.accion.via === 'app_nativa' && enlace && (
         <a href={enlace} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-accent/50 text-accent text-xs font-bold">
           Hacerlo en la plataforma <ExternalLink className="w-3.5 h-3.5" />

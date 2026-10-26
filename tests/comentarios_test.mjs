@@ -150,5 +150,17 @@ test('7 · handler: el cierre comprueba alcance y que no sea de la marca; respon
   assert.ok(/caducarRecomendaciones\(id, `sistema: comentario respondido/.test(H));
 });
 
+test('8 · comentar en la publicación (Sam, 2026-10-26): alcance antes de escribir, herramienta de la tabla, verificación', () => {
+  const i = H.indexOf('async function comentarEnPublicacion(');
+  const f = H.slice(i, H.indexOf('export default'));
+  const llamada = f.indexOf('mcpLeer(herramientas.post_comment_tool');
+  assert.ok(llamada > 0, 'no llama la herramienta de la tabla');
+  assert.ok(f.indexOf('enAlcance(alcance, p.brand_id)') > 0 && f.indexOf('enAlcance(alcance, p.brand_id)') < llamada, 'escribe antes de comprobar el alcance');
+  assert.ok(f.indexOf('r.scheduled_post_id !== postId') < llamada, 'el consejo no se comprueba contra la publicación antes de escribir');
+  assert.ok(/mcpLeer\(herramientas\.comment_read_tool/.test(f) && /verificada\(leida, id\)/.test(f), 'no verifica leyendo');
+  assert.ok(f.indexOf('mcpLeer(herramientas.comment_read_tool') < f.indexOf("status: 'seguida'"), 'marca seguida antes de publicar');
+  assert.ok(!/INSTAGRAM|FACEBOOK|ig_comment|fb_comment/.test(f), 'nombra una plataforma o una herramienta');
+});
+
 if (fallos) { console.error(`\n${fallos} fallo(s)`); process.exit(1); }
 console.log('\ncomentarios_test: OK');

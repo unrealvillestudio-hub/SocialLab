@@ -159,6 +159,19 @@ export async function cerrarComentario(token: string, postCommentId: number, kin
   }));
 }
 
+/**
+ * Publica un comentario de la marca en su propia publicación (Sam, 2026-10-26): abrir un debate, mencionar a un aliado.
+ * Con `recomendacionId`, el consejo queda seguido con lo publicado. `verificado` = la plataforma lo devolvió al leerlo.
+ */
+export async function comentarEnPublicacion(token: string, scheduledPostId: string, message: string, recomendacionId?: string):
+  Promise<{ comentario: { id: string; verificado: boolean; motivo: string | null } }> {
+  return leer(await fetch('/api/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ tipo: 'comentar', scheduled_post_id: scheduledPostId, message, ...(recomendacionId ? { recomendacion_id: recomendacionId } : {}) }),
+  }));
+}
+
 // ── Asesor (`/api/tarjetas`, tarjetas de acción de SignalLab) ─────────────────
 
 export type Severidad = 'atencion' | 'oportunidad' | 'info';
