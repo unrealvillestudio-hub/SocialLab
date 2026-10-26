@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -12,6 +13,76 @@ const ETIQUETA_FORMATO: Record<string, string> = {
 };
 export const etiquetaFormato = (f: string) => ETIQUETA_FORMATO[f] ?? (f || 'sin formato');
 export const etiquetaPlataforma = (p: string) => (p ? p.charAt(0) + p.slice(1).toLowerCase() : p);
+
+/**
+ * EL COLOR DE CADA PLATAFORMA (Sam, 2026-10-26: «diferenciación visual para cada plataforma, para no confundir al
+ * operador»). El color es dato (`intel.signal_platforms.display_color`) y llega con el catálogo; aquí no se nombra
+ * ninguna plataforma. Sin color, neutro.
+ */
+const COLORES = new Map<string, string>();
+export function registrarColoresDePlataforma(xs: readonly { platform: string; color: string | null }[] | undefined): void {
+  COLORES.clear();
+  for (const x of xs ?? []) if (x.color && /^#[0-9a-f]{6}$/i.test(x.color)) COLORES.set(x.platform, x.color);
+}
+export const colorDePlataforma = (p: string | null | undefined): string | null => (p ? COLORES.get(p) ?? null : null);
+/** `#rrggbb` + alfa (0–1) → `rgba(...)`. */
+export function conAlfa(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+/** El borde izquierdo de una tarjeta, en el color de su plataforma. */
+export const bordeDePlataforma = (p: string | null | undefined): React.CSSProperties => {
+  const c = colorDePlataforma(p);
+  return c ? { borderLeftColor: c, borderLeftWidth: 3 } : {};
+};
+
+/** El chip de la plataforma: su nombre sobre su color, con un punto para que se distinga también sin color de fondo. */
+export function ChipPlataforma({ platform, className }: { platform: string; className?: string }) {
+  const c = colorDePlataforma(platform);
+  return (
+    <span className={cn('inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-zinc-800 text-zinc-300', className)}
+      style={c ? { backgroundColor: conAlfa(c, 0.18), color: '#F2F0EC', boxShadow: `inset 0 0 0 1px ${conAlfa(c, 0.55)}` } : undefined}>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: c ?? '#71717a' }} aria-hidden />
+      {etiquetaPlataforma(platform)}
+    </span>
+  );
+}
+
+/**
+ * VISTA PREVIA DE UNA IMAGEN (Sam, 2026-10-26): la miniatura se abre en grande al tocarla; se cierra con la X, tocando
+ * fuera o con Escape.
+ */
+export function VistaPrevia({ src, onCerrar }: { src: string; onCerrar: () => void }) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onCerrar(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [onCerrar]);
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Vista previa" onClick={onCerrar}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4">
+      <img src={src} alt="" referrerPolicy="no-referrer" onClick={(e) => e.stopPropagation()}
+        className="max-w-full max-h-full rounded-lg object-contain shadow-2xl" />
+      <button onClick={onCerrar} aria-label="Cerrar" className="absolute top-3 right-3 p-2 rounded-full bg-zinc-900/90 text-zinc-200 hover:bg-zinc-800">
+        <X className="w-5 h-5" />
+      </button>
+    </div>
+  );
+}
+
+/** Una miniatura que abre su vista previa. `className` es el de la imagen. */
+export function Miniatura({ src, className }: { src: string; className?: string }) {
+  const [abierta, setAbierta] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAbierta(true); }} title="Ver en grande"
+        className="shrink-0 cursor-zoom-in">
+        <img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" className={className} />
+      </button>
+      {abierta && <VistaPrevia src={src} onCerrar={() => setAbierta(false)} />}
+    </>
+  );
+}
 
 /** Fecha y hora en el huso de la marca; sin huso declarado, en el del navegador (y se dice). */
 export function fechaHora(iso: string | null | undefined, huso: string | null | undefined): string {

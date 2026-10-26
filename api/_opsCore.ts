@@ -292,6 +292,8 @@ export interface FilaCuenta {
 /** Una fila del catálogo `intel.signal_account_metrics`: cómo se lee cada métrica y desde cuántos seguidores. */
 export interface MetricaCatalogo {
   platform: string; metric: string; breakdown: string; read_as: string; min_followers: number | null; notes: string | null;
+  /** Cómo se resume la serie en el período (#499): `sum` (por defecto) o `last` (un total acumulado: el último valor). */
+  aggregation?: 'sum' | 'last' | null;
 }
 
 /** La métrica que da el total de seguidores. Vocabulario de la plataforma, igual en IG y FB. */
@@ -304,7 +306,7 @@ export interface ResumenCuenta {
   brand_id: string; platform: string;
   seguidores: { value: number; fecha: string } | null;
   /** Series diarias (`read_as = time_series`): un punto por día; los últimos días pueden cambiar. */
-  series: { metric: string; nota: string | null; puntos: PuntoSerie[] }[];
+  series: { metric: string; nota: string | null; agregacion: 'sum' | 'last'; puntos: PuntoSerie[] }[];
   /** Totales del período: suma de los días con valor de cada métrica sin desglose. */
   totales: { metric: string; total: number; dias: number; nota: string | null }[];
   /** Campos (`read_as = field`) distintos de los seguidores: su última lectura. */
@@ -366,7 +368,7 @@ export function resumenCuenta(
       if (metric === METRICA_SEGUIDORES) { r.seguidores = { value: numero(ultimaConValor.value)!, fecha: ultimaConValor.metric_date }; continue; }
       if (c?.read_as === 'field') { r.campos.push({ metric, value: numero(ultimaConValor.value)!, fecha: ultimaConValor.metric_date }); continue; }
       if (c?.read_as === 'time_series') {
-        r.series.push({ metric, nota: c.notes, puntos: ordenadas.map((f) => ({
+        r.series.push({ metric, nota: c.notes, agregacion: c.aggregation === 'last' ? 'last' : 'sum', puntos: ordenadas.map((f) => ({
           fecha: f.metric_date, value: numero(f.value), motivo: f.unavailable_reason, provisional: f.metric_date >= limiteProvisional,
         })) });
         continue;

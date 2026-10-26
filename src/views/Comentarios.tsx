@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, MessageCircle, RefreshCw, Send, X } from 'lucide-react';
+import { Check, ExternalLink, Lock, MessageCircle, RefreshCw, RotateCcw, Send, X } from 'lucide-react';
 import {
-  comentarios as leerComentarios, responderComentario, ops, ErrorApi,
+  comentarios as leerComentarios, responderComentario, cerrarComentario, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
+  type TipoCierre,
 } from '../api';
-import { Aviso, Cargando, Chip, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
+import { Aviso, Cargando, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, fechaHora, ChevronAsesor } from '../ui/components';
 import { usePulso } from '../ui/Pulso';
 
 /**
@@ -18,6 +19,11 @@ import { usePulso } from '../ui/Pulso';
  * EL ASESOR EN LA TARJETA (Sam, 2026-10-26): si el asesor dejó una sugerencia para el comentario, se ve
  * aquí y su borrador se puede usar; si no, «Pedir consejo al asesor» se lo pide sobre ESE comentario
  * (el asesor lo atiende aunque tenga más de 72 h). El consejo llega en el siguiente ciclo, cada 15 min.
+ *
+ * LO ATENDIDO SALE (Sam, 2026-10-26: «tan pronto respondamos la tarjeta se libera hasta que esa misma persona vuelva a
+ * comentar»). Por defecto sólo se ve lo pendiente; lo respondido y lo cerrado —«Hecho», «Contestado fuera», «Descartar»—
+ * sale en el acto y queda a la vista con «ver atendidos», donde se puede reabrir. Los comentarios van agrupados bajo su
+ * publicación, que se muestra una vez, y cada tarjeta lleva el color de su plataforma.
  */
 
 const DIA = 86_400_000;
@@ -28,8 +34,14 @@ const ESTADO: Record<EstadoComentario, { etiqueta: string; clase: string }> = {
   fallida: { etiqueta: 'respuesta fallida', clase: 'bg-red-500/15 text-red-300' },
   en_curso: { etiqueta: 'respuesta en curso', clase: 'bg-sky-500/15 text-sky-300' },
   respondido: { etiqueta: 'respondido', clase: 'bg-emerald-500/15 text-emerald-300' },
+  cerrado: { etiqueta: 'atendido', clase: 'bg-zinc-700/60 text-zinc-300' },
   de_la_marca: { etiqueta: 'de la marca', clase: 'bg-zinc-700/60 text-zinc-300' },
 };
+
+/** Lo que espera al operador: lo único que la bandeja muestra por defecto. */
+const PENDIENTES: ReadonlySet<EstadoComentario> = new Set(['sin_responder', 'fallida']);
+
+const CIERRE: Record<TipoCierre, string> = { hecho: 'hecho', descartado: 'descartado', contestado_fuera: 'contestado fuera de SocialLab' };
 
 const ESTADO_RESPUESTA: Record<RespuestaComentario['status'], { etiqueta: string; clase: string }> = {
   requested: { etiqueta: 'pedida', clase: 'text-sky-300' },
@@ -55,6 +67,9 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
   const [data, setData] = useState<RespComentarios | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [verDeLaMarca, setVerDeLaMarca] = useState(false);
+  const [verAtendidos, setVerAtendidos] = useState(false);
+  // Lo que se acaba de atender sale en el acto, sin esperar a la relectura.
+  const [atendidos, setAtendidos] = useState<Set<number>>(new Set());
   const [tick, setTick] = useState(0);
   const [posts, setPosts] = useState<Map<string, Publicada>>(new Map());
 
@@ -64,7 +79,7 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
   useEffect(() => {
     let vivo = true;
     leerComentarios(token, { marca: marca || undefined, desde: new Date(Date.now() - dias * DIA).toISOString() })
-      .then((r) => { if (vivo) { setData(r); setError(null); } })
+      .then((r) => { if (vivo) { setData(r); setError(null); setAtendidos(new Set()); } })
       .catch((e) => vivo && setError(e instanceof ErrorApi ? e.message : String(e)));
     return () => { vivo = false; };
   }, [token, marca, dias, tick]);
@@ -82,13 +97,27 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
   const visibles = useMemo(
-    () => (data?.comentarios ?? []).filter((c) => (verDeLaMarca || c.estado !== 'de_la_marca') && (!post || c.scheduled_post_id === post) && (!plataforma || c.platform === plataforma)),
-    [data, verDeLaMarca, post, plataforma]);
+    () => (data?.comentarios ?? []).filter((c) =>
+      (c.estado === 'de_la_marca' ? verDeLaMarca : verAtendidos || (PENDIENTES.has(c.estado) && !atendidos.has(c.id)))
+      && (!post || c.scheduled_post_id === post) && (!plataforma || c.platform === plataforma)),
+    [data, verDeLaMarca, verAtendidos, atendidos, post, plataforma]);
+  // Un grupo por publicación, en el orden del endpoint (lo que más espera, primero): la publicación se ve una vez.
+  const grupos = useMemo(() => {
+    const m = new Map<string, Comentario[]>();
+    for (const c of visibles) {
+      const k = c.scheduled_post_id ?? `${c.platform}|${c.platform_post_id}`;
+      m.set(k, [...(m.get(k) ?? []), c]);
+    }
+    return [...m.entries()];
+  }, [visibles]);
+  const atender = (id: number) => { setAtendidos((s) => new Set(s).add(id)); setTick((n) => n + 1); };
   const delPost = post ? posts.get(post) : undefined;
   // Con un filtro (plataforma o post), los contadores son los de lo filtrado; sin filtro, los del endpoint.
   const filtrado = !!(post || plataforma);
-  const pendientes = filtrado ? visibles.filter((c) => c.estado === 'sin_responder' || c.estado === 'fallida').length : data?.pendientes ?? 0;
-  const total = filtrado ? visibles.length : data?.total ?? 0;
+  const enFiltro = (data?.comentarios ?? []).filter((c) => (!post || c.scheduled_post_id === post) && (!plataforma || c.platform === plataforma));
+  const pendientes = (filtrado ? enFiltro : data?.comentarios ?? [])
+    .filter((c) => (c.estado === 'sin_responder' || c.estado === 'fallida') && !atendidos.has(c.id)).length;
+  const total = filtrado ? enFiltro.length : data?.total ?? 0;
 
   return (
     <div className="space-y-4">
@@ -100,8 +129,12 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
           </button>
         ))}
         <label className="order-last sm:order-none basis-full sm:basis-auto flex items-center gap-1.5 text-[11px] text-zinc-400 sm:ml-2 py-1">
+          <input type="checkbox" checked={verAtendidos} onChange={(e) => setVerAtendidos(e.target.checked)} />
+          ver atendidos (respondidos y cerrados)
+        </label>
+        <label className="order-last sm:order-none basis-full sm:basis-auto flex items-center gap-1.5 text-[11px] text-zinc-400 py-1">
           <input type="checkbox" checked={verDeLaMarca} onChange={(e) => setVerDeLaMarca(e.target.checked)} />
-          ver también los comentarios de la marca
+          ver también los de la marca
         </label>
         <button onClick={() => setTick((n) => n + 1)} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
           <RefreshCw className="w-3.5 h-3.5" /> Actualizar
@@ -125,22 +158,54 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
             <span>{total} comentarios en {dias} días</span>
           </div>
           {data.truncado && <Aviso tono="error">Hay más comentarios de los que se muestran: acota el rango.</Aviso>}
-          {visibles.length === 0 && <Aviso>No hay comentarios en esta ventana.</Aviso>}
-          <ul className="space-y-3">
-            {visibles.map((c) => (
-              <TarjetaComentario key={c.id} c={c} post={c.scheduled_post_id ? posts.get(c.scheduled_post_id) : undefined}
-                token={token} nombre={nombre(c.brand_id)} huso={huso(c.brand_id)}
-                onCambio={() => setTick((n) => n + 1)} />
+          {visibles.length === 0 && <Aviso>{verAtendidos ? 'No hay comentarios en esta ventana.' : 'Nada pendiente: todo lo de esta ventana está atendido.'}</Aviso>}
+          <div className="space-y-4">
+            {grupos.map(([k, cs]) => (
+              <section key={k} className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-2.5 sm:p-3 space-y-2.5" style={bordeDePlataforma(cs[0].platform)}>
+                <CabeceraPublicacion c={cs[0]} post={cs[0].scheduled_post_id ? posts.get(cs[0].scheduled_post_id) : undefined}
+                  nombre={nombre(cs[0].brand_id)} huso={huso(cs[0].brand_id)} />
+                <ul className="space-y-2.5">
+                  {cs.map((c) => (
+                    <TarjetaComentario key={c.id} c={c} token={token} huso={huso(c.brand_id)}
+                      onCambio={() => setTick((n) => n + 1)} onAtendido={() => atender(c.id)} />
+                  ))}
+                </ul>
+              </section>
             ))}
-          </ul>
+          </div>
         </>
       )}
     </div>
   );
 }
 
-function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
-  c: Comentario; post?: Publicada; token: string; nombre: string; huso: string | null; onCambio: () => void;
+/** La publicación comentada, una vez por grupo: miniatura (se abre en grande), marca, plataforma, texto y enlace. */
+function CabeceraPublicacion({ c, post, nombre, huso }: { c: Comentario; post?: Publicada; nombre: string; huso: string | null }) {
+  const img = post ? post.image_url ?? post.media_urls?.[0] ?? null : null;
+  return (
+    <div className="flex items-center gap-2.5">
+      {img ? <Miniatura src={img} className="w-12 h-12 rounded-lg object-cover bg-zinc-800" />
+        : <div className="w-12 h-12 shrink-0 rounded-lg bg-zinc-800" />}
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Chip className="text-zinc-200">{nombre}</Chip>
+          <ChipPlataforma platform={c.platform} />
+          {post && <span className="text-[10px] text-zinc-500">{fechaHora(post.published_at, huso)}</span>}
+        </div>
+        {post ? <p className="text-[11px] text-zinc-400 line-clamp-2">{post.copy_text ?? ''}</p>
+          : <p className="text-[10px] font-mono text-zinc-600">post {c.platform_post_id}</p>}
+      </div>
+      {post?.enlace && (
+        <a href={post.enlace} target="_blank" rel="noreferrer" title="Ver en la plataforma" className="shrink-0 p-2 rounded-lg text-accent hover:bg-zinc-800">
+          <ExternalLink className="w-4 h-4" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
+  c: Comentario; token: string; huso: string | null; onCambio: () => void; onAtendido: () => void;
 }) {
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState<null | 'publica' | 'privada'>(null);
@@ -157,6 +222,17 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
   const [deLaReco, setDeLaReco] = useState<string | null>(null);
   const [pidiendo, setPidiendo] = useState(false);
   const [descartando, setDescartando] = useState(false);
+  const [cerrando, setCerrando] = useState<TipoCierre | 'reabrir' | null>(null);
+
+  // Cerrar sin responder (Sam, 2026-10-26): sale de la bandeja y el asesor no lo vuelve a proponer. O reabrir.
+  const cerrar = async (kind: TipoCierre | null) => {
+    setCerrando(kind ?? 'reabrir'); setError(null);
+    try {
+      await cerrarComentario(token, c.id, kind);
+      if (kind) onAtendido(); else onCambio();
+    } catch (e) { setError(e instanceof ErrorApi ? e.message : String(e)); }
+    finally { setCerrando(null); }
+  };
 
   const enviar = async (enPrivado: boolean) => {
     setEnviando(enPrivado ? 'privada' : 'publica'); setError(null);
@@ -164,11 +240,13 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
       await responderComentario(token, c.id, texto, enPrivado);
       if (deLaReco) await marcarRecomendacion(deLaReco, 'seguida', texto).catch((e) => console.error('[comentarios] marcar seguida:', e));
       setTexto(''); setDeLaReco(null);
+      // Respondido: la tarjeta se libera hasta que esa persona vuelva a comentar.
+      onAtendido();
     } catch (e) {
       setError(e instanceof ErrorApi ? e.message : String(e));
+      onCambio();
     } finally {
       setEnviando(null);
-      onCambio();
     }
   };
   // Descartar el consejo cuando no se está de acuerdo (Sam, 2026-10-26): queda `descartada` y sale de la tarjeta;
@@ -191,29 +269,16 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
 
   return (
     <li className={cn('rounded-xl border p-3 space-y-2', espera_ ? 'border-amber-500/30 bg-amber-500/[0.03]' : 'border-zinc-800 bg-zinc-900/30',
-      c.parent_comment_id && 'ml-3 sm:ml-6')}>
+      c.parent_comment_id && 'ml-3 sm:ml-6')} style={bordeDePlataforma(c.platform)}>
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         <span className={cn('px-1.5 py-0.5 rounded font-mono uppercase text-[10px]', estado.clase)}>{estado.etiqueta}</span>
-        <Chip className="text-zinc-200">{nombre}</Chip>
-        <Chip>{etiquetaPlataforma(c.platform)}</Chip>
+        <ChipPlataforma platform={c.platform} />
         {c.parent_comment_id && <Chip>respuesta en un hilo</Chip>}
         <span className="text-zinc-400 font-medium">{c.author_name ?? 'autor desconocido'}</span>
         <span className="text-zinc-600">· {fechaHora(c.commented_at, huso)}</span>
         {espera_ && <span className="ml-auto text-amber-300">espera {espera(c.commented_at)}</span>}
       </div>
       <p className="texto-editorial text-sm text-zinc-100 whitespace-pre-line break-words">{c.text ?? ''}</p>
-      {post ? (
-        <a href={post.enlace ?? undefined} target="_blank" rel="noreferrer"
-          className="flex items-center gap-2 rounded-lg bg-zinc-950/50 border border-zinc-800 p-1.5 hover:border-zinc-700">
-          {(post.image_url ?? post.media_urls?.[0]) && (
-            <img src={(post.image_url ?? post.media_urls?.[0])!} alt="" loading="lazy" referrerPolicy="no-referrer" className="w-10 h-10 rounded object-cover" />
-          )}
-          <span className="flex-1 min-w-0 text-[11px] text-zinc-400 truncate">{post.copy_text ?? ''}</span>
-          <span className="text-[10px] text-zinc-600 shrink-0">{fechaHora(post.published_at, huso)}</span>
-        </a>
-      ) : (
-        <div className="text-[10px] font-mono text-zinc-600">post {c.platform_post_id}</div>
-      )}
       {c.like_count ? <div className="text-[10px] text-zinc-500">{c.like_count} me gusta</div> : null}
 
       {c.respuestas.length > 0 && (
@@ -292,6 +357,32 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
       )}
       {puedeResponder && privada && !privada.puede && privada.motivo && (
         <p className="text-[10px] text-zinc-500">En privado: {privada.motivo}.</p>
+      )}
+      {c.cierre && (
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-500">
+          <span>Atendido: <b className="text-zinc-300">{CIERRE[c.cierre.kind]}</b> · por {c.cierre.closed_by} · {fechaHora(c.cierre.closed_at, huso)}</span>
+          <button onClick={() => cerrar(null)} disabled={!!cerrando}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">
+            <RotateCcw className="w-3 h-3" /> {cerrando === 'reabrir' ? 'Reabriendo…' : 'Reabrir'}
+          </button>
+        </div>
+      )}
+      {!c.from_brand && !c.cierre && c.estado !== 'respondido' && c.estado !== 'en_curso' && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <span className="text-[10px] text-zinc-600 mr-1">Sin responder desde aquí:</span>
+          <button onClick={() => cerrar('hecho')} disabled={!!cerrando} title="Ya se hizo (p. ej. se fijó en la app): sale de la bandeja"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-800 text-[11px] text-zinc-200 hover:bg-zinc-700 disabled:opacity-40">
+            <Check className="w-3.5 h-3.5" /> {cerrando === 'hecho' ? 'Cerrando…' : 'Hecho'}
+          </button>
+          <button onClick={() => cerrar('contestado_fuera')} disabled={!!cerrando} title="Se contestó por otra vía (la app, un mensaje)"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-800 text-[11px] text-zinc-200 hover:bg-zinc-700 disabled:opacity-40">
+            <MessageCircle className="w-3.5 h-3.5" /> {cerrando === 'contestado_fuera' ? 'Cerrando…' : 'Contestado fuera'}
+          </button>
+          <button onClick={() => cerrar('descartado')} disabled={!!cerrando} title="No es viable responderlo: sale de la bandeja"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">
+            <X className="w-3.5 h-3.5" /> {cerrando === 'descartado' ? 'Descartando…' : 'Descartar'}
+          </button>
+        </div>
       )}
       {c.estado === 'fallida' && (
         <p className="text-[10px] text-zinc-500">Antes de reintentar, mira en la plataforma si la respuesta salió: un reintento puede duplicarla.</p>

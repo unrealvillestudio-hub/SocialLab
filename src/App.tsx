@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle } from 'lucide-react';
 import { entrar, ops, plataformasDe, ErrorApi, type Catalogo, type Sesion } from './api';
-import { Aviso, Cargando, cn, etiquetaPlataforma, ChevronAsesor } from './ui/components';
+import { Aviso, Cargando, cn, etiquetaPlataforma, ChevronAsesor, registrarColoresDePlataforma } from './ui/components';
 import Publicado from './views/Publicado';
 import Calendario from './views/Calendario';
 import Estadisticas from './views/Estadisticas';
@@ -91,7 +91,8 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
 
   useEffect(() => {
     ops<Catalogo>(sesion.session_token, 'catalogo')
-      .then(setCatalogo)
+      // Los colores de plataforma se registran antes de pintar: todas las pestañas los leen.
+      .then((c) => { registrarColoresDePlataforma(c.plataformas); setCatalogo(c); })
       .catch((e) => { if (e instanceof ErrorApi && e.status === 401) onSalir(); else setError(e.message); });
   }, [sesion.session_token]);
 

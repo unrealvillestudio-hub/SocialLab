@@ -87,7 +87,14 @@ export function cambioDeRecomendacion(actual: string, nuevo: string): { error: s
 // cómo va cada pedido, sin nada del despertar (costo, tokens, modelo, error interno).
 
 export type EstadoPedido = 'pendiente' | 'sin_consejo' | 'con_consejo';
-export interface PedidoFila { post_comment_id: number | string | null; status: string; recommendations: number | null; created_at: string }
+export interface PedidoFila {
+  post_comment_id: number | string | null; status: string; recommendations: number | null; created_at: string;
+  /** La publicación pedida (2026-10-26, unrlvl-iid-functions #499). Sin la columna, no viene. */
+  scheduled_post_id?: string | null;
+}
+
+const estadoDe = (f: PedidoFila): EstadoPedido =>
+  f.status === 'pendiente' ? 'pendiente' : f.status === 'hecho' && Number(f.recommendations) > 0 ? 'con_consejo' : 'sin_consejo';
 
 /**
  * El último pedido de cada comentario: `pendiente` mientras el asesor no lo atendió; `con_consejo` si dejó
@@ -101,10 +108,24 @@ export function estadoDePedidos(filas: readonly PedidoFila[]): Array<{ post_comm
     const prev = ultimo.get(id);
     if (!prev || f.created_at > prev.created_at) ultimo.set(id, f);
   }
-  return [...ultimo.entries()].map(([id, f]) => ({
-    post_comment_id: id,
-    estado: f.status === 'pendiente' ? 'pendiente' : f.status === 'hecho' && Number(f.recommendations) > 0 ? 'con_consejo' : 'sin_consejo',
-  }));
+  return [...ultimo.entries()].map(([id, f]) => ({ post_comment_id: id, estado: estadoDe(f) }));
+}
+
+/** Lo mismo, por publicación: el último pedido de consejo sobre cada publicación (Sam, 2026-10-26). */
+export function estadoDePedidosDePublicacion(filas: readonly PedidoFila[]): Array<{ scheduled_post_id: string; estado: EstadoPedido }> {
+  const ultimo = new Map<string, PedidoFila>();
+  for (const f of filas) {
+    if (!f.scheduled_post_id || f.post_comment_id != null) continue;
+    const prev = ultimo.get(f.scheduled_post_id);
+    if (!prev || f.created_at > prev.created_at) ultimo.set(f.scheduled_post_id, f);
+  }
+  return [...ultimo.entries()].map(([id, f]) => ({ scheduled_post_id: id, estado: estadoDe(f) }));
+}
+
+/** El id de una publicación recibido en el cuerpo: uuid, o null si no vino. `undefined` = inválido. */
+export function idDePublicacion(v: unknown): string | null | undefined {
+  if (v === undefined || v === null || v === '') return null;
+  return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v) ? v.toLowerCase() : undefined;
 }
 
 /** El id de un comentario recibido en el cuerpo: entero positivo, o null si no vino. `undefined` = inválido. */

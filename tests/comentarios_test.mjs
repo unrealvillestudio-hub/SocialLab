@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   estados, ordenar, objetivoDeRespuesta, mensajeValido, hayEnVuelo, verificada, MINUTOS_EN_VUELO,
-  privadaDisponible, objetivoDePrivada,
+  privadaDisponible, objetivoDePrivada, ESTADOS_PENDIENTES, esTipoDeCierre,
 } from '../api/_commentsCore.ts';
 
 let fallos = 0;
@@ -125,6 +125,29 @@ test('7b · handler: la privada usa sus herramientas, lee por message_id y la ba
   assert.ok(/kind: clase/.test(H), 'la petición no registra si es privada');
   assert.ok(/23505\|duplicate key/.test(H) && /status: 409/.test(H), 'dos envíos a la vez no se frenan');
   assert.ok(H.indexOf('privadaDisponible(c, previas') < H.indexOf("sbEscribir<FilaRespuesta>('POST', 'comment_replies'"), 'se asienta antes de mirar la ventana');
+});
+
+test('7 · cerrado (Sam, 2026-10-26): un cierre saca el comentario de lo pendiente; respondido manda sobre cerrado', () => {
+  const cs = [c(1), c(2), c(3)];
+  const rs = [{ id: 'r', post_comment_id: 3, status: 'verified', requested_at: '2026-10-25T12:00:00Z' }];
+  const e = estados(cs, rs, new Set([2, 3]));
+  assert.equal(e.get(1), 'sin_responder');
+  assert.equal(e.get(2), 'cerrado');
+  assert.equal(e.get(3), 'respondido');
+  assert.deepEqual([...ESTADOS_PENDIENTES], ['sin_responder', 'fallida'], 'respondido, en curso y cerrado salen de la bandeja');
+  assert.deepEqual(ordenar([{ id: 2, estado: 'cerrado', commented_at: '2026-10-25T10:00:00Z' }, { id: 1, estado: 'sin_responder', commented_at: '2026-10-24T10:00:00Z' }]).map((x) => x.id), [1, 2]);
+  assert.equal(estados(cs, []).get(2), 'sin_responder', 'sin cierres, nada cambia');
+});
+test('7 · tipos de cierre: sólo hecho, descartado y contestado_fuera', () => {
+  for (const k of ['hecho', 'descartado', 'contestado_fuera']) assert.ok(esTipoDeCierre(k));
+  for (const k of ['respondido', '', null, 'HECHO']) assert.ok(!esTipoDeCierre(k));
+});
+test('7 · handler: el cierre comprueba alcance y que no sea de la marca; responder caduca el consejo abierto', () => {
+  const i = H.indexOf('async function cierre(');
+  const cuerpo = H.slice(i, H.indexOf('export default'));
+  assert.ok(cuerpo.indexOf('enAlcance(alcance, c.brand_id)') < cuerpo.indexOf('await cerrar('), 'cierra antes de comprobar el alcance');
+  assert.ok(/c\.from_brand/.test(cuerpo));
+  assert.ok(/caducarRecomendaciones\(id, `sistema: comentario respondido/.test(H));
 });
 
 if (fallos) { console.error(`\n${fallos} fallo(s)`); process.exit(1); }
