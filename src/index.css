@@ -56,6 +56,11 @@
    marca), para que el nombre conserve su caja. El espaciado se compensa (0.04 / 0.72) para que el aire entre letras
    sea el mismo en las altas y en las bajas. */
 .lt-minuscula { font-size: 0.72em; letter-spacing: 0.0556em; }
+/* El icono del asesor: el mismo chevron, a la escala de la caja del icono (w-4 h-4, w-5 h-5…). El «>» de Bebas Neue
+   es bajo: a 1,5 veces el alto de la caja ocupa lo mismo que los iconos de lucide de al lado. */
+.chevron-asesor { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  container-type: size; font-family: 'Bebas Neue', sans-serif; line-height: 1; }
+.chevron-asesor .lt-chevron { font-size: 150cqh; margin-right: 0; }
 @media (prefers-reduced-motion: reduce) {
   .lt-chevron { animation: none; }
 }

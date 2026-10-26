@@ -38,4 +38,12 @@ export const Aviso = ({ children, tono = 'info' }: { children: React.ReactNode; 
   </div>
 );
 
+/**
+ * El icono del asesor: el chevron «>» de Unrealville, cian y parpadeando como en el logotipo (Sam, 2026-10-26).
+ * Se dimensiona como un icono de lucide (`w-4 h-4`…): el glifo llena el alto de su caja.
+ */
+export const ChevronAsesor = ({ className }: { className?: string }) => (
+  <span className={cn('chevron-asesor', className)} aria-hidden><span className="lt-chevron">&gt;</span></span>
+);
+
 export const Cargando = () => <div className="text-xs text-zinc-500 animate-pulse">Cargando…</div>;
