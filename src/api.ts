@@ -137,7 +137,11 @@ export interface Comentario {
   allegado?: Relacion | null;
   /** La meta de respuesta de su marca y plataforma, en minutos, y lo que se tardó en responderlo (null = sin respuesta). */
   meta_min?: number | null; respondido_en_min?: number | null;
+  /** La intención del comentario según el catálogo (`intel.comment_intents`); null sin catálogo o si es de la marca. */
+  intencion?: IntencionComentario | null;
 }
+/** Una intención del catálogo: etiqueta, prioridad (menor = antes) y color, todo dato (Sam, 2026-10-26). */
+export interface IntencionComentario { intent_key: string; label: string; priority: number; display_color: string | null; fallback: boolean }
 /** Tiempo de respuesta de una marca en una plataforma, en la ventana (Sam, 2026-10-26). */
 export interface TiempoDeRespuesta {
   brand_id: string; platform: string; meta_min: number | null; respondidos: number; mediana_min: number | null;

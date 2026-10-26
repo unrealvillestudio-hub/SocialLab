@@ -45,8 +45,8 @@ import { leerCierres, cerrar, reabrir, caducarRecomendaciones } from './_cierres
 import { leerAllegados, marcarAllegado, quitarAllegado } from './_allegados.js';
 import { idDePublicacion } from './_asesorCore.js';
 import {
-  esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, metaDe, minutosHastaRespuesta, tiemposDeRespuesta, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
-  type Comentario, type Respuesta, type Estado, type Clase, type MetaDeRespuesta,
+  esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, clasificador, metaDe, minutosHastaRespuesta, tiemposDeRespuesta, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
+  type Comentario, type Respuesta, type Estado, type Clase, type MetaDeRespuesta, type Intencion, type PatronDeIntencion,
 } from './_commentsCore.js';
 
 const MAX_COMENTARIOS = 1000;
@@ -114,8 +114,9 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
   const comentarios = await sbGet<FilaComentario>(
     `post_comments?select=${COLUMNAS_COMENTARIO}${filtro}&commented_at=gte.${encodeURIComponent(v.desde)}`
     + `&commented_at=lt.${encodeURIComponent(v.hasta)}&order=commented_at.desc&limit=${MAX_COMENTARIOS}`, 'content');
-  const [respuestas, cierres, allegados, metasR] = await Promise.all([
-    respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id)), leerAllegados(marcas), metasDeRespuesta(marcas)]);
+  const [respuestas, cierres, allegados, metasR, intenciones] = await Promise.all([
+    respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id)), leerAllegados(marcas), metasDeRespuesta(marcas),
+    catalogoDeIntenciones(marcas)]);
   const meta = (b: string, p: string) => metaDe(metasR.metas, metasR.porDefecto, b, p);
   const minutos = minutosHastaRespuesta(comentarios, respuestas);
   const est = estados(comentarios, respuestas, new Set(cierres.keys()), new Set(allegados.keys()));
@@ -129,10 +130,29 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
     allegado: c.author_name ? allegados.get(claveDeAutor(c.brand_id, c.platform, c.author_name as string))?.relation ?? null : null,
     privada: privadaDisponible(c, porComentario.get(c.id) ?? [], ventanaDe.get(c.platform) ?? null, ahora),
     meta_min: c.from_brand ? null : meta(c.brand_id, c.platform), respondido_en_min: minutos.get(c.id) ?? null,
+    intencion: c.from_brand ? null : intenciones.intencionDe(c.brand_id, c.text as string | null),
   })));
   const pendientes = filas.filter((f) => f.estado === 'sin_responder' || f.estado === 'fallida').length;
   return { ventana: v, total: filas.length, pendientes, truncado: comentarios.length >= MAX_COMENTARIOS, comentarios: filas,
     tiempos: tiemposDeRespuesta(filas, minutos, meta, ahora) };
+}
+
+/**
+ * El catálogo de intenciones (unrlvl-iid-functions, migración 20261026233000): las activas y los patrones comunes y de
+ * las marcas consultadas. Sin la migración, no hay intenciones y la bandeja ordena como antes.
+ */
+async function catalogoDeIntenciones(marcas: typeof TODAS | string[]) {
+  const filtro = marcas === TODAS ? '' : `&or=(brand_id.is.null,brand_id.${enLista(marcas)})`;
+  const [intenciones, patrones] = await Promise.all([
+    sbGet<Intencion>('comment_intents?select=intent_key,label,priority,display_color,fallback&active=is.true', 'intel'),
+    sbGet<PatronDeIntencion>(`comment_intent_patterns?select=intent_key,brand_id,pattern${filtro}`, 'intel'),
+  ]).catch((e) => {
+    console.error(`[comentarios] intenciones sin leer: ${e instanceof Error ? e.message : e}`);
+    return [[], []] as [Intencion[], PatronDeIntencion[]];
+  });
+  const c = clasificador(intenciones, patrones);
+  for (const p of c.invalidos) console.error(`[comentarios] patrón de intención que no compila (${p.intent_key}): ${p.pattern}`);
+  return c;
 }
 
 /**

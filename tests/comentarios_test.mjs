@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   estados, ordenar, objetivoDeRespuesta, mensajeValido, hayEnVuelo, verificada, MINUTOS_EN_VUELO,
-  privadaDisponible, objetivoDePrivada, ESTADOS_PENDIENTES, esTipoDeCierre, esRelacion, claveDeAutor, metaDe, minutosHastaRespuesta, tiemposDeRespuesta,
+  privadaDisponible, objetivoDePrivada, ESTADOS_PENDIENTES, esTipoDeCierre, esRelacion, claveDeAutor, metaDe, minutosHastaRespuesta, tiemposDeRespuesta, clasificador,
 } from '../api/_commentsCore.ts';
 
 let fallos = 0;
@@ -214,6 +214,50 @@ test('10 · resumen: mediana, porcentaje dentro de la meta y lo que ya la pasó;
   const minutos = new Map([[1, 30], [2, 300], [3, 90], [4, null], [5, null], [6, 5], [7, null]]);
   const [t] = tiemposDeRespuesta(filas, minutos, () => 240, ahora);
   assert.deepEqual(t, { brand_id: 'B', platform: 'P', meta_min: 240, respondidos: 3, mediana_min: 90, dentro_pct: 67, fuera_de_meta: 1 });
+});
+
+// ── 11 · PRIORIDAD POR INTENCIÓN (Sam, 2026-10-26) ───────────────────────────────────────────────
+const INT = [
+  { intent_key: 'urgente', label: 'Urgente', priority: 10, display_color: '#ff0000', fallback: false },
+  { intent_key: 'pregunta', label: 'Pregunta', priority: 30, display_color: null, fallback: false },
+  { intent_key: 'resto', label: 'Resto', priority: 50, display_color: null, fallback: true },
+  { intent_key: 'aplauso', label: 'Aplauso', priority: 60, display_color: null, fallback: false },
+];
+test('11 · clasificador: la de menor prioridad que casa; si ninguna, la de reserva; patrones de otra marca no cuentan', () => {
+  const k = clasificador(INT, [
+    { intent_key: 'urgente', brand_id: null, pattern: 'no funciona' },
+    { intent_key: 'pregunta', brand_id: null, pattern: '\\?|¿' },
+    { intent_key: 'aplauso', brand_id: null, pattern: '👏|bravo' },
+    { intent_key: 'urgente', brand_id: 'OTRA', pattern: 'lento' },
+  ]);
+  assert.equal(k.intencionDe('B', 'No funciona, ¿me ayudan?').intent_key, 'urgente');
+  assert.equal(k.intencionDe('B', '¿Y esto?').intent_key, 'pregunta');
+  assert.equal(k.intencionDe('B', 'BRAVO 👏').intent_key, 'aplauso');
+  assert.equal(k.intencionDe('B', 'Muy lento').intent_key, 'resto', 'el patrón de OTRA no aplica a B');
+  assert.equal(k.intencionDe('OTRA', 'Muy lento').intent_key, 'urgente');
+  assert.equal(k.intencionDe('B', null).intent_key, 'resto');
+});
+test('11 · clasificador: un patrón que no compila se omite y se informa; sin catálogo, null', () => {
+  const k = clasificador(INT, [{ intent_key: 'urgente', brand_id: null, pattern: '(' }, { intent_key: 'fantasma', brand_id: null, pattern: 'x' }]);
+  assert.equal(k.invalidos.length, 1);
+  assert.equal(k.intencionDe('B', '(').intent_key, 'resto');
+  assert.equal(clasificador([], []).intencionDe('B', 'no funciona'), null);
+});
+test('11 · ordenar: dentro del mismo estado, por intención y luego lo más reciente; sin intención, al final', () => {
+  const x = (id, estado, intencion, min) => ({ id, estado, intencion, commented_at: `2026-10-25T10:${min}:00Z` });
+  const orden = ordenar([
+    x(1, 'sin_responder', INT[3], '50'), x(2, 'sin_responder', INT[0], '10'), x(3, 'sin_responder', INT[2], '40'),
+    x(4, 'sin_responder', INT[2], '45'), x(5, 'sin_responder', null, '59'), x(6, 'respondido', INT[0], '00'),
+  ]).map((y) => y.id);
+  assert.deepEqual(orden, [2, 4, 3, 1, 5, 6]);
+});
+test('11 · el handler lee el catálogo sin nombrar intenciones y tolera que no exista', () => {
+  const src = readFileSync(new URL('../api/comments.ts', import.meta.url), 'utf8');
+  assert.ok(/comment_intents\?select=intent_key,label,priority,display_color,fallback&active=is\.true/.test(src));
+  assert.ok(/comment_intent_patterns\?select=intent_key,brand_id,pattern/.test(src));
+  assert.ok(/intenciones sin leer/.test(src), 'sin la migración, la bandeja sigue');
+  const core = readFileSync(new URL('../api/_commentsCore.ts', import.meta.url), 'utf8');
+  assert.ok(!/'(queja|compra|elogio)'/.test(core + src), 'una intención nombrada en el código');
 });
 
 if (fallos) { console.error(`\n${fallos} fallo(s)`); process.exit(1); }

@@ -3,9 +3,9 @@ import { Check, ExternalLink, Lock, MessageCircle, RefreshCw, RotateCcw, Send, U
 import {
   comentarios as leerComentarios, responderComentario, cerrarComentario, marcarAllegado, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
-  type TipoCierre, type Relacion,
+  type TipoCierre, type Relacion, type IntencionComentario,
 } from '../api';
-import { Aviso, Cargando, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, fechaHora, ChevronAsesor } from '../ui/components';
+import { Aviso, Cargando, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, conAlfa, fechaHora, ChevronAsesor } from '../ui/components';
 import { usePulso } from '../ui/Pulso';
 
 /**
@@ -117,7 +117,8 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
       (c.estado === 'de_la_marca' ? verDeLaMarca : verAtendidos || (PENDIENTES.has(c.estado) && !atendidos.has(c.id)))
       && (!post || c.scheduled_post_id === post) && (!plataforma || c.platform === plataforma)),
     [data, verDeLaMarca, verAtendidos, atendidos, post, plataforma]);
-  // Un grupo por publicación, en el orden del endpoint (lo que más espera, primero): la publicación se ve una vez.
+  // Un grupo por publicación, en el orden del endpoint (estado y luego intención: una queja o una compra, primero): la
+  // publicación se ve una vez y su grupo sube con su comentario más prioritario.
   const grupos = useMemo(() => {
     const m = new Map<string, Comentario[]>();
     for (const c of visibles) {
@@ -270,6 +271,18 @@ function CabeceraPublicacion({ c, post, nombre, huso }: { c: Comentario; post?: 
   );
 }
 
+/** La intención del comentario, en su color (dato del catálogo). La de reserva no se pinta: no dice nada. */
+function ChipIntencion({ i }: { i: IntencionComentario }) {
+  const c = i.display_color && /^#[0-9a-f]{6}$/i.test(i.display_color) ? i.display_color : null;
+  return (
+    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-200"
+      style={c ? { backgroundColor: conAlfa(c, 0.18), color: '#F2F0EC', boxShadow: `inset 0 0 0 1px ${conAlfa(c, 0.6)}` } : undefined}
+      title="Intención del comentario: la bandeja pone primero las de mayor prioridad">
+      {i.label}
+    </span>
+  );
+}
+
 function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
   c: Comentario; token: string; huso: string | null; onCambio: () => void;
   /** Atendido: con cómo deshacerlo si se cerró o se marcó allegado; sin nada si se respondió. */
@@ -352,6 +365,7 @@ function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
         <span className={cn('px-1.5 py-0.5 rounded font-mono uppercase text-[10px]', estado.clase)}>{estado.etiqueta}</span>
         <ChipPlataforma platform={c.platform} />
+        {c.intencion && !c.intencion.fallback && <ChipIntencion i={c.intencion} />}
         {c.parent_comment_id && <Chip>respuesta en un hilo</Chip>}
         <span className="text-zinc-400 font-medium">{c.author_name ?? 'autor desconocido'}</span>
         <span className="text-zinc-600">· {fechaHora(c.commented_at, huso)}</span>

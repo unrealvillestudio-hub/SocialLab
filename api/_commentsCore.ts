@@ -122,10 +122,52 @@ export function estados(comentarios: readonly Comentario[], respuestas: readonly
   return out;
 }
 
-/** Ordena la bandeja: por estado y, dentro de cada estado, lo más reciente primero. */
-export function ordenar<T extends { estado: Estado; commented_at: string }>(xs: readonly T[]): T[] {
+/** Ordena la bandeja: por estado; dentro de cada estado, por la prioridad de su intención (sin intención, al final) y
+ *  luego lo más reciente primero. Sin catálogo de intenciones, el orden es el de siempre. */
+export function ordenar<T extends { estado: Estado; commented_at: string; intencion?: { priority: number } | null }>(xs: readonly T[]): T[] {
+  const prioridad = (x: T) => x.intencion?.priority ?? Number.POSITIVE_INFINITY;
   return xs.slice().sort((a, b) =>
-    ORDEN_DE_ESTADO[a.estado] - ORDEN_DE_ESTADO[b.estado] || Date.parse(b.commented_at) - Date.parse(a.commented_at));
+    ORDEN_DE_ESTADO[a.estado] - ORDEN_DE_ESTADO[b.estado]
+    || (prioridad(a) === prioridad(b) ? 0 : prioridad(a) < prioridad(b) ? -1 : 1)
+    || Date.parse(b.commented_at) - Date.parse(a.commented_at));
+}
+
+// ── PRIORIDAD POR INTENCIÓN (Sam, 2026-10-26) ─────────────────────────────────────────────────────
+//
+// La intención de un comentario es dato: `intel.comment_intents` (etiqueta, prioridad, color, la de reserva) e
+// `intel.comment_intent_patterns` (regex sin distinguir mayúsculas; `brand_id` NULL = todas las marcas, con
+// `brand_id` = sólo esa). Un comentario recibe la intención de menor prioridad cuyo patrón case; si ninguno casa, la
+// de reserva. Aquí no se nombra ninguna intención ni ninguna palabra: todo llega del catálogo.
+
+export interface Intencion { intent_key: string; label: string; priority: number; display_color: string | null; fallback: boolean }
+export interface PatronDeIntencion { intent_key: string; brand_id: string | null; pattern: string }
+
+/**
+ * El clasificador de un catálogo: compila cada patrón una vez. Un patrón que no compila se omite y se devuelve en
+ * `invalidos` (lo demás sigue clasificando). Sin intenciones, devuelve siempre null: la bandeja ordena como antes.
+ */
+export function clasificador(intenciones: readonly Intencion[], patrones: readonly PatronDeIntencion[]): {
+  intencionDe: (brandId: string, texto: string | null | undefined) => Intencion | null; invalidos: PatronDeIntencion[];
+} {
+  const porClave = new Map(intenciones.map((i) => [i.intent_key, i]));
+  const reserva = intenciones.find((i) => i.fallback) ?? null;
+  const invalidos: PatronDeIntencion[] = [];
+  const compilados: Array<{ intencion: Intencion; brand_id: string | null; re: RegExp }> = [];
+  for (const p of patrones) {
+    const intencion = porClave.get(p.intent_key);
+    if (!intencion) continue;
+    try { compilados.push({ intencion, brand_id: p.brand_id, re: new RegExp(p.pattern, 'iu') }); }
+    catch { invalidos.push(p); }
+  }
+  compilados.sort((a, b) => a.intencion.priority - b.intencion.priority);
+  return {
+    invalidos,
+    intencionDe: (brandId, texto) => {
+      if (!intenciones.length) return null;
+      const t = String(texto ?? '');
+      return compilados.find((c) => (c.brand_id === null || c.brand_id === brandId) && c.re.test(t))?.intencion ?? reserva;
+    },
+  };
 }
 
 /** El mensaje, recortado. Lanza si está vacío: un mensaje vacío no es una respuesta. */
