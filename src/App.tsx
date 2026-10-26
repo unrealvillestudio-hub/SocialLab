@@ -21,11 +21,11 @@ const PESTANAS: { id: Pestana; etiqueta: string; corta?: string; icono: React.El
   { id: 'calendario', etiqueta: 'Calendario', corta: 'Agenda', icono: CalendarDays },
 ];
 
-/** El lockup del estudio (>UNREALVILLE studio, BP v1.6) y el nombre de la app. */
+/** El logotipo del lab: «>SocialLab», todo en cian y con el chevron parpadeando (Sam, 2026-10-26). Sustituye al
+ *  lockup del estudio (>UNREALVILLE studio): cada lab se firma con su propio nombre. */
 const Logo = () => (
   <div className="flex items-baseline gap-2 min-w-0">
-    <span className="lt-logotype text-xl"><span className="lt-chevron">&gt;</span><span>UNREALVILLE</span><span className="lt-studio">studio</span></span>
-    <span className="titulo text-xl text-accent">SocialLab</span>
+    <span className="lt-logotype lt-lab text-xl"><span className="lt-chevron">&gt;</span><span>SocialLab</span></span>
     <span className="hidden md:inline text-[10px] text-zinc-500">tablero de operadores</span>
   </div>
 );
