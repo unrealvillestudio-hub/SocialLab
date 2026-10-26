@@ -43,6 +43,8 @@ interface Pulso {
   pendientesPorPost: Map<string, number>; pendientes: number;
   nuevos: Nuevo[]; nuevosPorPost: Set<string>;
   atender: (scheduledPostId: string | null) => void; descartar: () => void;
+  /** El operador está en la bandeja: lo nuevo que ya llegó a ella queda visto (Sam, 2026-10-26). */
+  marcarVistos: () => void;
   /** Asesor: las tarjetas abiertas, por publicación y por cuenta (`marca|PLATAFORMA`). */
   tarjetas: Tarjeta[]; tarjetasNuevas: number; tarjetasPorPost: Map<string, Tarjeta[]>; tarjetasPorCuenta: Map<string, Tarjeta[]>;
   comentariosPorId: Map<number, Comentario>;
@@ -184,8 +186,11 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
           }
         }
         pendientesVistos.current = new Set(esperan.map((c) => c.id));
-        // Un aviso que ya llegó a la bandeja deja de pedir «míralo en la plataforma».
-        setNuevos((xs) => xs.map((x) => (x.scheduled_post_id && porPost.has(x.scheduled_post_id) ? { ...x, en_bandeja: true } : x)));
+        // Un aviso que ya llegó a la bandeja deja de pedir «míralo en la plataforma»; y si su publicación ya no tiene
+        // nada pendiente (se respondió o se cerró), deja de ser «nuevo» (Sam, 2026-10-26: la pill seguía animada).
+        setNuevos((xs) => xs
+          .map((x) => (x.scheduled_post_id && porPost.has(x.scheduled_post_id) ? { ...x, en_bandeja: true } : x))
+          .filter((x) => !(x.en_bandeja && x.scheduled_post_id && !porPost.has(x.scheduled_post_id))));
       })
       .catch((e) => console.error('[pulso] bandeja de comentarios:', e instanceof Error ? e.message : e));
     return () => { activo = false; };
@@ -274,6 +279,7 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     nuevosPorPost: new Set(nuevos.flatMap((n) => (n.scheduled_post_id ? [n.scheduled_post_id] : []))),
     atender: (id) => { setNuevos((xs) => xs.filter((x) => x.scheduled_post_id !== id)); onAtender(id); },
     descartar: () => setNuevos([]),
+    marcarVistos: () => setNuevos((xs) => (xs.some((x) => x.en_bandeja) ? xs.filter((x) => !x.en_bandeja) : xs)),
     tarjetas: listaTarjetas,
     tarjetasNuevas: listaTarjetas.filter((t) => t.status === 'nueva').length + listaRecos.filter((r) => !recosAbiertas.has(r.id)).length,
     recomendaciones: listaRecos, recosPorPost: gruposRecos.porPost, recosPorCuenta: gruposRecos.porCuenta, recosAbiertas,

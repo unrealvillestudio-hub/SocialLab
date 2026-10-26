@@ -148,7 +148,10 @@ export interface TiempoDeRespuesta {
   dentro_pct: number | null; fuera_de_meta: number;
 }
 export interface RespComentarios {
-  ventana: { desde: string; hasta: string }; total: number; pendientes: number; truncado: boolean; comentarios: Comentario[];
+  ventana: { desde: string; hasta: string };
+  /** Fin de la última lectura de SignalLab: lo que trae la bandeja es de ese momento. */
+  leido_en?: string | null;
+  total: number; pendientes: number; truncado: boolean; comentarios: Comentario[];
   tiempos?: TiempoDeRespuesta[];
 }
 
@@ -282,7 +285,8 @@ export interface HiloDM {
   responder: { puede: boolean; hasta: string | null; motivo: string | null };
 }
 export interface RespMensajes {
-  disponible: boolean; motivo: string | null; ventana: { desde: string; hasta: string }; total: number; pendientes: number;
+  disponible: boolean; motivo: string | null; ventana: { desde: string; hasta: string }; leido_en?: string | null;
+  total: number; pendientes: number;
   truncado?: boolean; hilos: HiloDM[];
 }
 

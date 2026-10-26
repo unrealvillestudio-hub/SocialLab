@@ -23,7 +23,7 @@
 import { ventana, enAlcance, marcasConsultadas, TODAS } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida, esTablaInexistente } from './_opsShared.js';
 import { leerAllegados, marcarAllegado, quitarAllegado } from './_allegados.js';
-import { sbEscribir, catalogoDeIntenciones, metasDeRespuesta } from './_bandejaShared.js';
+import { sbEscribir, catalogoDeIntenciones, metasDeRespuesta, ultimaLecturaDeSignalLab } from './_bandejaShared.js';
 import { claveDeAutor, esRelacion, mensajeValido, metaDe, verificada } from './_commentsCore.js';
 import {
   estadoDeHilo, ventanaDeRespuesta, ordenarHilos, sinContestar, ultimoDeLaPersona, ESTADOS_HILO_PENDIENTES,
@@ -73,11 +73,11 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
     throw err;
   }
   const ids = hilos.map((h) => h.id);
-  const [mensajes, respuestas, allegados, metasR, intenciones, plataformas] = await Promise.all([
+  const [mensajes, respuestas, allegados, metasR, intenciones, plataformas, leidoEn] = await Promise.all([
     porTrozos<MensajeDM>(ids, (l) => `dm_messages?select=${COLUMNAS_MENSAJE}&thread_id=in.(${l})&order=sent_at.desc`),
     porTrozos<RespuestaDM>(ids, (l) => `dm_replies?select=${COLUMNAS_RESPUESTA}&thread_id=in.(${l})&order=requested_at.desc`),
     leerAllegados(marcas), metasDeRespuesta(marcas), catalogoDeIntenciones(marcas),
-    sbGet<Plataforma>(`signal_platforms?select=${COLUMNAS_PLATAFORMA}&active=is.true`, 'intel'),
+    sbGet<Plataforma>(`signal_platforms?select=${COLUMNAS_PLATAFORMA}&active=is.true`, 'intel'), ultimaLecturaDeSignalLab(),
   ]);
   const ventanaDe = new Map(plataformas.map((p) => [p.platform, p.dm_send_tool ? p.dm_reply_window_minutes : null]));
   const mensajesDe = new Map<number, MensajeDM[]>();
@@ -108,7 +108,7 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
     };
   }));
   const pendientes = filas.filter((f) => ESTADOS_HILO_PENDIENTES.includes(f.estado)).length;
-  return { disponible: true, motivo: null, ventana: v, total: filas.length, pendientes, truncado: hilos.length >= MAX_HILOS, hilos: filas };
+  return { disponible: true, motivo: null, ventana: v, leido_en: leidoEn, total: filas.length, pendientes, truncado: hilos.length >= MAX_HILOS, hilos: filas };
 }
 
 // ── POST ──────────────────────────────────────────────────────────────────────

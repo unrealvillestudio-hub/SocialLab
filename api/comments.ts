@@ -44,7 +44,7 @@ import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida } from './_opsS
 import { leerCierres, cerrar, reabrir, caducarRecomendaciones } from './_cierres.js';
 import { leerAllegados, marcarAllegado, quitarAllegado } from './_allegados.js';
 import { idDePublicacion } from './_asesorCore.js';
-import { sbEscribir, EscrituraFallida, catalogoDeIntenciones, metasDeRespuesta } from './_bandejaShared.js';
+import { sbEscribir, EscrituraFallida, catalogoDeIntenciones, metasDeRespuesta, ultimaLecturaDeSignalLab } from './_bandejaShared.js';
 import {
   esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, metaDe, minutosHastaRespuesta, tiemposDeRespuesta, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
   type Comentario, type Respuesta, type Estado, type Clase,
@@ -86,9 +86,9 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
   const comentarios = await sbGet<FilaComentario>(
     `post_comments?select=${COLUMNAS_COMENTARIO}${filtro}&commented_at=gte.${encodeURIComponent(v.desde)}`
     + `&commented_at=lt.${encodeURIComponent(v.hasta)}&order=commented_at.desc&limit=${MAX_COMENTARIOS}`, 'content');
-  const [respuestas, cierres, allegados, metasR, intenciones] = await Promise.all([
+  const [respuestas, cierres, allegados, metasR, intenciones, leidoEn] = await Promise.all([
     respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id)), leerAllegados(marcas), metasDeRespuesta(marcas),
-    catalogoDeIntenciones(marcas)]);
+    catalogoDeIntenciones(marcas), ultimaLecturaDeSignalLab()]);
   const meta = (b: string, p: string) => metaDe(metasR.metas, metasR.porDefecto, b, p);
   const minutos = minutosHastaRespuesta(comentarios, respuestas);
   const est = estados(comentarios, respuestas, new Set(cierres.keys()), new Set(allegados.keys()));
@@ -105,7 +105,7 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
     intencion: c.from_brand ? null : intenciones.intencionDe(c.brand_id, c.text as string | null),
   })));
   const pendientes = filas.filter((f) => f.estado === 'sin_responder' || f.estado === 'fallida').length;
-  return { ventana: v, total: filas.length, pendientes, truncado: comentarios.length >= MAX_COMENTARIOS, comentarios: filas,
+  return { ventana: v, leido_en: leidoEn, total: filas.length, pendientes, truncado: comentarios.length >= MAX_COMENTARIOS, comentarios: filas,
     tiempos: tiemposDeRespuesta(filas, minutos, meta, ahora) };
 }
 

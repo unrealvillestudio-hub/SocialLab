@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Inbox, RefreshCw, RotateCcw, Send, Users } from 'lucide-react';
+import { Inbox, RotateCcw, Send, Users } from 'lucide-react';
 import {
   mensajes as leerMensajes, responderMensaje, marcarAllegadoDM, ErrorApi,
   type EstadoHilo, type HiloDM, type Marca, type RespMensajes, type RespuestaDM, type Relacion,
 } from '../api';
-import { Aviso, Cargando, ChipIntencion, ChipPlataforma, bordeDePlataforma, cn, fechaHora } from '../ui/components';
+import { Aviso, BotonActualizar, Cargando, EstadoDeLectura, ChipIntencion, ChipPlataforma, bordeDePlataforma, cn, fechaHora } from '../ui/components';
 
 /**
  * MENSAJES · la bandeja de mensajes directos (Sam, 2026-10-26; mejora 5; endpoint `/api/mensajes`).
@@ -56,14 +56,18 @@ export default function Mensajes({ token, marca, plataforma = '', marcas }: {
   const [verAtendidos, setVerAtendidos] = useState(false);
   const [atendidos, setAtendidos] = useState<Set<number>>(new Set());
   const [tick, setTick] = useState(0);
+  const [cargando, setCargando] = useState(false);
+  const [actualizadoEn, setActualizadoEn] = useState<number | null>(null);
 
   // Se relee cada minuto: SignalLab trae mensajes nuevos cada 15 min y una respuesta cambia de estado.
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 60_000); return () => clearInterval(t); }, []);
   useEffect(() => {
     let vivo = true;
+    setCargando(true);
     leerMensajes(token, { marca: marca || undefined, desde: new Date(Date.now() - dias * DIA).toISOString() })
-      .then((r) => { if (vivo) { setData(r); setError(null); setAtendidos(new Set()); } })
-      .catch((e) => vivo && setError(e instanceof ErrorApi ? e.message : String(e)));
+      .then((r) => { if (vivo) { setData(r); setError(null); setAtendidos(new Set()); setActualizadoEn(Date.now()); } })
+      .catch((e) => vivo && setError(e instanceof ErrorApi ? e.message : String(e)))
+      .finally(() => vivo && setCargando(false));
     return () => { vivo = false; };
   }, [token, marca, dias, tick]);
 
@@ -87,10 +91,9 @@ export default function Mensajes({ token, marca, plataforma = '', marcas }: {
           <input type="checkbox" checked={verAtendidos} onChange={(e) => setVerAtendidos(e.target.checked)} />
           ver atendidos (respondidos y allegados)
         </label>
-        <button onClick={() => setTick((n) => n + 1)} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
-          <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-        </button>
+        <BotonActualizar cargando={cargando} onClick={() => setTick((n) => n + 1)} />
       </div>
+      <EstadoDeLectura actualizadoEn={actualizadoEn} leidoEn={data?.leido_en} />
 
       {error && <Aviso tono="error">No se pudieron leer los mensajes: {error}</Aviso>}
       {!data && !error && <Cargando />}

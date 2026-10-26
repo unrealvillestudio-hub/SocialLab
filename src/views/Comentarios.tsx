@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, ExternalLink, Lock, MessageCircle, RefreshCw, RotateCcw, Send, Users, X } from 'lucide-react';
+import { Check, ExternalLink, Lock, MessageCircle, RotateCcw, Send, Users, X } from 'lucide-react';
 import {
   comentarios as leerComentarios, responderComentario, cerrarComentario, marcarAllegado, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
   type TipoCierre, type Relacion,
 } from '../api';
-import { Aviso, Cargando, Chip, ChipIntencion, ChipPlataforma, Miniatura, bordeDePlataforma, cn, fechaHora, ChevronAsesor } from '../ui/components';
+import { Aviso, BotonActualizar, Cargando, EstadoDeLectura, Chip, ChipIntencion, ChipPlataforma, Miniatura, bordeDePlataforma, cn, fechaHora, ChevronAsesor } from '../ui/components';
 import { usePulso } from '../ui/Pulso';
 
 /**
@@ -87,6 +87,11 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
   // Lo que se acaba de atender sale en el acto, sin esperar a la relectura.
   const [atendidos, setAtendidos] = useState<Set<number>>(new Set());
   const [tick, setTick] = useState(0);
+  // Estar en la bandeja es verla: lo «nuevo» que ya llegó aquí deja de animarse en Publicado y en el aviso.
+  const { marcarVistos } = usePulso();
+  useEffect(() => { marcarVistos(); }, [marcarVistos, data]);
+  const [cargando, setCargando] = useState(false);
+  const [actualizadoEn, setActualizadoEn] = useState<number | null>(null);
   const [posts, setPosts] = useState<Map<string, Publicada>>(new Map());
 
   // Se relee cada minuto: SignalLab trae comentarios nuevos cada 15 min y una respuesta cambia de estado.
@@ -94,9 +99,11 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
 
   useEffect(() => {
     let vivo = true;
+    setCargando(true);
     leerComentarios(token, { marca: marca || undefined, desde: new Date(Date.now() - dias * DIA).toISOString() })
-      .then((r) => { if (vivo) { setData(r); setError(null); setAtendidos(new Set()); } })
-      .catch((e) => vivo && setError(e instanceof ErrorApi ? e.message : String(e)));
+      .then((r) => { if (vivo) { setData(r); setError(null); setAtendidos(new Set()); setActualizadoEn(Date.now()); } })
+      .catch((e) => vivo && setError(e instanceof ErrorApi ? e.message : String(e)))
+      .finally(() => vivo && setCargando(false));
     return () => { vivo = false; };
   }, [token, marca, dias, tick]);
 
@@ -177,10 +184,9 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
           <input type="checkbox" checked={verDeLaMarca} onChange={(e) => setVerDeLaMarca(e.target.checked)} />
           ver también los de la marca
         </label>
-        <button onClick={() => setTick((n) => n + 1)} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
-          <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-        </button>
+        <BotonActualizar cargando={cargando} onClick={() => setTick((n) => n + 1)} />
       </div>
+      <EstadoDeLectura actualizadoEn={actualizadoEn} leidoEn={data?.leido_en} />
 
       {post && (
         <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-xs text-zinc-300">
