@@ -3,7 +3,7 @@
  * `ecosystem.json` → `labs._logotipo`.
  *
  * La display de la UI (Bebas Neue) sólo tiene mayúsculas, así que cada tramo en minúscula se dibuja más
- * pequeño (`.lt-minuscula`) para que el nombre se lea con su caja: «SocialLab», no «SOCIALLAB».
+ * pequeño (`.lt-minuscula`, 0.72em, como «studio» en la web) para que el nombre se lea con su caja: «SocialLab», no «SOCIALLAB».
  */
 export interface TramoDeCaja { texto: string; minuscula: boolean }
 
