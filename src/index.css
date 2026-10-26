@@ -42,11 +42,12 @@
   @media (max-width: 639px) { input, select, textarea { font-size: 16px !important; } }
 }
 
-/* El logotipo: >UNREALVILLE studio. El chevron cian parpadea siempre (regla de la marca, sin excepciones). */
+/* El logotipo del lab: >SocialLab, todo en el cian de la marca (Sam, 2026-10-26). El chevron parpadea siempre
+   (regla de la marca, sin excepciones). Antes era el lockup del estudio, >UNREALVILLE studio. */
 @layer components {
   .lt-logotype { @apply inline-flex items-baseline; font-family: var(--font-display); letter-spacing: 0.04em; color: #F2F0EC; line-height: 1; }
+  .lt-lab { color: #00FFD1; }
   .lt-chevron { color: #00FFD1; animation: prompt-blink 1.1s step-end infinite; margin-right: 0.08em; }
-  .lt-studio { color: rgba(242, 240, 236, 0.32); font-size: 0.72em; margin-left: 0.18em; letter-spacing: 0.06em; }
   .titulo { font-family: var(--font-display); letter-spacing: 0.04em; }
   .texto-editorial { font-family: var(--font-serif); }
 }
