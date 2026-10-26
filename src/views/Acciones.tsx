@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, ExternalLink, Lock, RefreshCw, Send, Sparkles, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, Lock, RefreshCw, Send, X } from 'lucide-react';
 import { ops, responderComentario, ErrorApi, type Marca, type Publicada, type Recomendacion, type RespPublicado, type Tarjeta } from '../api';
 import { claveDeCuenta } from '../asesor';
 import { usePulso, PillsDePost, type FocoAsesor } from '../ui/Pulso';
-import { Aviso, Chip, cn, etiquetaPlataforma, fechaHora } from '../ui/components';
+import { Aviso, Chip, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
 
 /**
  * ACCIONES · el asesor (Fase 4; tarjetas de SignalLab, `intel.signal_cards`). Sam, 2026-10-25: «un community
@@ -92,7 +92,7 @@ export default function Acciones({ token, marca, plataforma, marcas, foco, onQui
       {pedido && <Aviso tono={pedido.ok ? 'info' : 'error'}>{pedido.texto}</Aviso>}
       {foco && (
         <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-xs text-zinc-300">
-          <Sparkles className="w-3.5 h-3.5 text-accent" /> Abierto desde su pill: aparece primero.
+          <ChevronAsesor className="w-3.5 h-3.5 text-accent" /> Abierto desde su pill: aparece primero.
           <button onClick={onQuitarFoco} className="ml-auto underline text-accent">Quitar</button>
         </div>
       )}
@@ -275,7 +275,7 @@ function RecomendacionAsesor({ r, token, enlace }: { r: Recomendacion; token: st
   return (
     <li className="rounded-xl border border-accent/40 bg-accent/[0.03] p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-        <span className="px-1.5 py-0.5 rounded uppercase font-bold bg-accent/10 text-accent"><Sparkles className="inline w-2.5 h-2.5 mr-0.5" />recomendación</span>
+        <span className="px-1.5 py-0.5 rounded uppercase font-bold bg-accent/10 text-accent"><ChevronAsesor className="inline w-2.5 h-2.5 mr-0.5" />recomendación</span>
         <span className="titulo text-base text-zinc-100">{r.accion.label}</span>
         {r.accion.via === 'interna' && <Chip className="bg-zinc-800 text-zinc-400"><Lock className="inline w-2.5 h-2.5 mr-0.5" />interna</Chip>}
       </div>

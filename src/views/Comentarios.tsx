@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Lock, MessageCircle, RefreshCw, Send, Sparkles } from 'lucide-react';
+import { Lock, MessageCircle, RefreshCw, Send, X } from 'lucide-react';
 import {
   comentarios as leerComentarios, responderComentario, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
 } from '../api';
-import { Aviso, Cargando, Chip, cn, etiquetaPlataforma, fechaHora } from '../ui/components';
+import { Aviso, Cargando, Chip, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
 import { usePulso } from '../ui/Pulso';
 
 /**
@@ -156,6 +156,7 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
   // La recomendación cuyo borrador se cargó en la caja: al enviar se marca seguida con lo que salió.
   const [deLaReco, setDeLaReco] = useState<string | null>(null);
   const [pidiendo, setPidiendo] = useState(false);
+  const [descartando, setDescartando] = useState(false);
 
   const enviar = async (enPrivado: boolean) => {
     setEnviando(enPrivado ? 'privada' : 'publica'); setError(null);
@@ -169,6 +170,17 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
       setEnviando(null);
       onCambio();
     }
+  };
+  // Descartar el consejo cuando no se está de acuerdo (Sam, 2026-10-26): queda `descartada` y sale de la tarjeta;
+  // se puede volver a pedir otro.
+  const descartar = async () => {
+    if (!reco) return;
+    setDescartando(true); setError(null);
+    try {
+      await marcarRecomendacion(reco.id, 'descartada');
+      if (deLaReco === reco.id) setDeLaReco(null);
+    } catch (e) { setError(e instanceof ErrorApi ? e.message : String(e)); }
+    finally { setDescartando(false); }
   };
   const pedir = async () => {
     setPidiendo(true); setError(null);
@@ -226,30 +238,36 @@ function TarjetaComentario({ c, post, token, nombre, huso, onCambio }: {
       {puedeResponder && reco && (
         <div className="rounded-lg border border-accent/40 bg-accent/[0.04] p-2.5 space-y-1.5">
           <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-accent">
-            <Sparkles className="w-3 h-3" /> Sugerencia del asesor
+            <ChevronAsesor className="w-3 h-3" /> Sugerencia del asesor
           </div>
           <p className="text-xs text-zinc-100">{reco.recommendation}</p>
           {reco.draft && (
-            <>
-              <p className="texto-editorial text-xs text-zinc-300 border-l-2 border-accent/40 pl-2 whitespace-pre-line">{reco.draft}</p>
+            <p className="texto-editorial text-xs text-zinc-300 border-l-2 border-accent/40 pl-2 whitespace-pre-line">{reco.draft}</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {reco.draft && (
               <button onClick={() => { setTexto(reco.draft ?? ''); setDeLaReco(reco.id); }}
                 className="px-3 py-1.5 rounded-lg border border-accent/50 text-accent text-[11px] font-bold">
                 Usar el borrador
               </button>
-            </>
-          )}
+            )}
+            <button onClick={descartar} disabled={descartando} title="No estoy de acuerdo con este consejo"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] text-zinc-400 hover:bg-zinc-800 disabled:opacity-40">
+              <X className="w-3.5 h-3.5" /> {descartando ? 'Descartando…' : 'Descartar'}
+            </button>
+          </div>
         </div>
       )}
       {puedeResponder && !reco && (
         pedido === 'pendiente' ? (
           <p className="flex items-center gap-1.5 text-[11px] text-accent">
-            <Sparkles className="w-3.5 h-3.5" /> Consejo pedido: el asesor lo deja aquí en unos minutos.
+            <ChevronAsesor className="w-3.5 h-3.5" /> Consejo pedido: el asesor lo deja aquí en unos minutos.
           </p>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={pedir} disabled={pidiendo}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-accent/40 text-accent text-[11px] font-bold hover:bg-accent/10 disabled:opacity-40">
-              <Sparkles className="w-3.5 h-3.5" /> {pidiendo ? 'Pidiendo…' : 'Pedir consejo al asesor'}
+              <ChevronAsesor className="w-3.5 h-3.5" /> {pidiendo ? 'Pidiendo…' : pedido === 'con_consejo' ? 'Pedir otro consejo' : 'Pedir consejo al asesor'}
             </button>
             {pedido === 'sin_consejo' && <span className="text-[10px] text-zinc-500">La última vez el asesor no dejó consejo; puedes volver a pedirlo.</span>}
           </div>

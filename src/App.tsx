@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle, Sparkles } from 'lucide-react';
+import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle } from 'lucide-react';
 import { entrar, ops, plataformasDe, ErrorApi, type Catalogo, type Sesion } from './api';
-import { Aviso, Cargando, cn, etiquetaPlataforma } from './ui/components';
+import { Aviso, Cargando, cn, etiquetaPlataforma, ChevronAsesor } from './ui/components';
 import Publicado from './views/Publicado';
 import Calendario from './views/Calendario';
 import Estadisticas from './views/Estadisticas';
@@ -17,7 +17,7 @@ const PESTANAS: { id: Pestana; etiqueta: string; corta?: string; icono: React.El
   { id: 'hoy', etiqueta: 'Hoy', icono: Flame },
   { id: 'publicado', etiqueta: 'Publicado', icono: LayoutGrid },
   { id: 'comentarios', etiqueta: 'Comentarios', corta: 'Coment.', icono: MessageCircle },
-  { id: 'acciones', etiqueta: 'Acciones', icono: Sparkles },
+  { id: 'acciones', etiqueta: 'Acciones', icono: ChevronAsesor },
   { id: 'estadisticas', etiqueta: 'Estadísticas', corta: 'Métricas', icono: BarChart3 },
   { id: 'calendario', etiqueta: 'Calendario', corta: 'Agenda', icono: CalendarDays },
 ];

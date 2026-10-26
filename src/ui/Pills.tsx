@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { cn } from './components';
-import { Sparkles } from 'lucide-react';
+import { cn, ChevronAsesor } from './components';
 import { haceCuanto, METRICA_COMENTARIOS } from '../pulso';
 import { severidadMayor } from '../asesor';
 
@@ -111,7 +110,7 @@ export function PillAsesor({ tarjetas, onClick }: { tarjetas: { severity: string
     <button type="button" onClick={onClick}
       title={`${tarjetas.length} ${tarjetas.length === 1 ? 'consejo' : 'consejos'} del asesor (${ETIQUETA_SEVERIDAD[sev] ?? sev})${nuevas ? ` · ${nuevas} sin abrir` : ''}`}
       className={cn('pill pill-asesor pill-accion', COLOR_SEVERIDAD[sev] ?? 'pill-asesor-info', nuevas > 0 && 'pill-asesor-nueva')}>
-      <Sparkles className="w-3 h-3" />
+      <ChevronAsesor className="w-3 h-3" />
       <span className="pill-etiqueta">asesor</span>
       <b className="pill-valor">{tarjetas.length}</b>
       {nuevas > 0 && <span className="pill-insignia pill-insignia-nuevo">nuevo</span>}
