@@ -3,9 +3,9 @@ import { Check, ExternalLink, Lock, MessageCircle, RefreshCw, RotateCcw, Send, U
 import {
   comentarios as leerComentarios, responderComentario, cerrarComentario, marcarAllegado, ops, ErrorApi,
   type Comentario, type EstadoComentario, type Marca, type Publicada, type RespComentarios, type RespPublicado, type RespuestaComentario,
-  type TipoCierre, type Relacion, type IntencionComentario,
+  type TipoCierre, type Relacion,
 } from '../api';
-import { Aviso, Cargando, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, conAlfa, fechaHora, ChevronAsesor } from '../ui/components';
+import { Aviso, Cargando, Chip, ChipIntencion, ChipPlataforma, Miniatura, bordeDePlataforma, cn, fechaHora, ChevronAsesor } from '../ui/components';
 import { usePulso } from '../ui/Pulso';
 
 /**
@@ -268,18 +268,6 @@ function CabeceraPublicacion({ c, post, nombre, huso }: { c: Comentario; post?: 
         </a>
       )}
     </div>
-  );
-}
-
-/** La intención del comentario, en su color (dato del catálogo). La de reserva no se pinta: no dice nada. */
-function ChipIntencion({ i }: { i: IntencionComentario }) {
-  const c = i.display_color && /^#[0-9a-f]{6}$/i.test(i.display_color) ? i.display_color : null;
-  return (
-    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-200"
-      style={c ? { backgroundColor: conAlfa(c, 0.18), color: '#F2F0EC', boxShadow: `inset 0 0 0 1px ${conAlfa(c, 0.6)}` } : undefined}
-      title="Intención del comentario: la bandeja pone primero las de mayor prioridad">
-      {i.label}
-    </span>
   );
 }
 

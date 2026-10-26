@@ -118,3 +118,15 @@ export const ChevronAsesor = ({ className }: { className?: string }) => (
 );
 
 export const Cargando = () => <div className="text-xs text-zinc-500 animate-pulse">Cargando…</div>;
+
+/** La intención de un comentario o de un mensaje, en su color (dato del catálogo). La de reserva no se pinta: no dice nada. */
+export function ChipIntencion({ i }: { i: { label: string; display_color: string | null } }) {
+  const c = i.display_color && /^#[0-9a-f]{6}$/i.test(i.display_color) ? i.display_color : null;
+  return (
+    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800 text-zinc-200"
+      style={c ? { backgroundColor: conAlfa(c, 0.18), color: '#F2F0EC', boxShadow: `inset 0 0 0 1px ${conAlfa(c, 0.6)}` } : undefined}
+      title="Intención del comentario: la bandeja pone primero las de mayor prioridad">
+      {i.label}
+    </span>
+  );
+}

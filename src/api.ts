@@ -262,3 +262,49 @@ export async function pedirConsejo(token: string, marca: string, postCommentId?:
       ...(scheduledPostId ? { scheduled_post_id: scheduledPostId } : {}) }),
   }));
 }
+
+// ── MENSAJES DIRECTOS (Sam, 2026-10-26; mejora 5) ─────────────────────────────────────────────────
+
+export type EstadoHilo = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'allegado';
+export interface MensajeDM {
+  id: number; thread_id: number; from_brand: boolean; author_name: string | null; author_platform_id: string | null;
+  text: string | null; sent_at: string;
+}
+export interface RespuestaDM {
+  id: string; thread_id: number; status: 'requested' | 'sent' | 'verified' | 'failed'; message: string;
+  requested_by: string; requested_at: string; sent_at: string | null; platform_message_id: string | null; error: string | null;
+}
+export interface HiloDM {
+  id: number; platform: string; brand_id: string; participant_platform_id: string | null; participant_name: string | null;
+  updated_at: string | null; estado: EstadoHilo; allegado: Relacion | null; mensajes: MensajeDM[]; respuestas: RespuestaDM[];
+  ultimo_at: string | null; espera_desde: string | null; intencion: IntencionComentario | null; meta_min: number | null;
+  /** Si todavía se puede responder: la plataforma sólo deja hacerlo dentro de su ventana tras el último mensaje. */
+  responder: { puede: boolean; hasta: string | null; motivo: string | null };
+}
+export interface RespMensajes {
+  disponible: boolean; motivo: string | null; ventana: { desde: string; hasta: string }; total: number; pendientes: number;
+  truncado?: boolean; hilos: HiloDM[];
+}
+
+export async function mensajes(token: string, params: Record<string, string | undefined> = {}): Promise<RespMensajes> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  return leer<RespMensajes>(await fetch(`/api/mensajes?${qs}`, { headers: { Authorization: `Bearer ${token}` } }));
+}
+
+export async function responderMensaje(token: string, threadId: number, message: string): Promise<{ respuesta: RespuestaDM }> {
+  return leer(await fetch('/api/mensajes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ thread_id: threadId, message }),
+  }));
+}
+
+/** Marca (o desmarca, con `null`) a la persona de la conversación como allegada o del equipo. */
+export async function marcarAllegadoDM(token: string, threadId: number, relation: Relacion | null): Promise<unknown> {
+  return leer(await fetch('/api/mensajes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(relation ? { tipo: 'allegado', thread_id: threadId, relation } : { tipo: 'quitar_allegado', thread_id: threadId }),
+  }));
+}

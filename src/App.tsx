@@ -1,22 +1,24 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BarChart3, CalendarDays, Flame, LayoutGrid, LogOut, MessageCircle } from 'lucide-react';
+import { BarChart3, CalendarDays, Flame, Inbox, LayoutGrid, LogOut, MessageCircle } from 'lucide-react';
 import { entrar, ops, plataformasDe, ErrorApi, type Catalogo, type Sesion } from './api';
 import { Aviso, Cargando, cn, etiquetaPlataforma, ChevronAsesor, registrarColoresDePlataforma } from './ui/components';
 import Publicado from './views/Publicado';
 import Calendario from './views/Calendario';
 import Estadisticas from './views/Estadisticas';
 import Comentarios from './views/Comentarios';
+import Mensajes from './views/Mensajes';
 import Hoy from './views/Hoy';
 import { AvisoComentarios, ProveedorPulso, usePulso, type FocoAsesor } from './ui/Pulso';
 import Acciones from './views/Acciones';
 import { tramosDeCaja } from './logotipo';
 
-type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'acciones' | 'estadisticas' | 'calendario';
-/** `corta`: la etiqueta de la barra inferior del teléfono, donde caben seis pestañas. */
+type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'mensajes' | 'acciones' | 'estadisticas' | 'calendario';
+/** `corta`: la etiqueta de la barra inferior del teléfono, donde caben siete pestañas. */
 const PESTANAS: { id: Pestana; etiqueta: string; corta?: string; icono: React.ElementType }[] = [
   { id: 'hoy', etiqueta: 'Hoy', icono: Flame },
   { id: 'publicado', etiqueta: 'Publicado', icono: LayoutGrid },
   { id: 'comentarios', etiqueta: 'Comentarios', corta: 'Coment.', icono: MessageCircle },
+  { id: 'mensajes', etiqueta: 'Mensajes', corta: 'DMs', icono: Inbox },
   { id: 'acciones', etiqueta: 'Acciones', icono: ChevronAsesor },
   { id: 'estadisticas', etiqueta: 'Estadísticas', corta: 'Métricas', icono: BarChart3 },
   { id: 'calendario', etiqueta: 'Calendario', corta: 'Agenda', icono: CalendarDays },
@@ -133,7 +135,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
               </div>
             </div>
             <h2 className="md:hidden titulo text-2xl text-zinc-100">{PESTANAS.find((p) => p.id === pestana)?.etiqueta}</h2>
-            <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-zinc-800 bg-uv-bg/95 backdrop-blur-md grid grid-cols-6"
+            <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-zinc-800 bg-uv-bg/95 backdrop-blur-md grid grid-cols-7"
               style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
               {PESTANAS.map((p) => (
                 <button key={p.id} onClick={() => irA(p.id)} aria-current={pestana === p.id ? 'page' : undefined}
@@ -150,6 +152,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
             {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
             {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas}
               post={postComentarios} onQuitarFiltro={() => setPostComentarios(null)} />}
+            {pestana === 'mensajes' && <Mensajes token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
             {pestana === 'acciones' && <Acciones token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas}
               foco={focoAsesor} onQuitarFoco={() => setFocoAsesor(null)} />}
             {pestana === 'estadisticas' && <Estadisticas token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}

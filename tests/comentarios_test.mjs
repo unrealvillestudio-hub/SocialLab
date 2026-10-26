@@ -252,7 +252,10 @@ test('11 · ordenar: dentro del mismo estado, por intención y luego lo más rec
   assert.deepEqual(orden, [2, 4, 3, 1, 5, 6]);
 });
 test('11 · el handler lee el catálogo sin nombrar intenciones y tolera que no exista', () => {
-  const src = readFileSync(new URL('../api/comments.ts', import.meta.url), 'utf8');
+  // El catálogo se lee en el módulo que comparten las bandejas (comentarios y mensajes); comments.ts lo usa.
+  const src = readFileSync(new URL('../api/_bandejaShared.ts', import.meta.url), 'utf8')
+    + readFileSync(new URL('../api/comments.ts', import.meta.url), 'utf8');
+  assert.ok(/catalogoDeIntenciones\(marcas\)/.test(src), 'la bandeja de comentarios no clasifica');
   assert.ok(/comment_intents\?select=intent_key,label,priority,display_color,fallback&active=is\.true/.test(src));
   assert.ok(/comment_intent_patterns\?select=intent_key,brand_id,pattern/.test(src));
   assert.ok(/intenciones sin leer/.test(src), 'sin la migración, la bandeja sigue');
