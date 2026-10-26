@@ -106,7 +106,7 @@ export default function Publicado({ token, marca, plataforma, marcas }: { token:
             <Radio className={cn('w-3.5 h-3.5', cargandoVivo ? 'animate-pulse text-amber-400' : 'text-emerald-400')} />
             {cargandoVivo ? 'Leyendo las plataformas…'
               : vivo ? <span>En vivo: {vivo.publicaciones.length} publicaciones recientes.<span className="hidden sm:inline"> Hasta {vivo.limite} por cuenta. Me gusta y comentarios: cada minuto las cuentas que publicaron en los últimos 7 días, las demás cada 10 min (con la pestaña visible). Las demás métricas, al ritmo de SignalLab.</span></span> : 'Sin lectura en vivo.'}
-            {leidoEn && <span className="sm:ml-auto text-zinc-600">métricas releídas {new Date(leidoEn).toLocaleTimeString('es')} · cada 60 s</span>}
+            {leidoEn && <span className="sm:ml-auto text-zinc-600">tablero actualizado {new Date(leidoEn).toLocaleTimeString('es')} · cada 60 s</span>}
           </div>
           <Rejilla columnas={columnas}>
             {reg.publicaciones.map((p) => <Tarjeta compacta={columnas === 2} key={`${p.via ?? 'carril'}-${p.id}`} p={p} vivo={p.platform_post_id ? porId.get(p.platform_post_id) : undefined}
