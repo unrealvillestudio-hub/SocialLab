@@ -1,0 +1,13 @@
+/**
+ * LOGOTIPO DEL LAB — «>SocialLab» (Sam, 2026-10-26). Regla para todos los labs: `unrlvl-context` →
+ * `ecosystem.json` → `labs._logotipo`.
+ *
+ * La display de la UI (Bebas Neue) sólo tiene mayúsculas, así que cada tramo en minúscula se dibuja más
+ * pequeño (`.lt-minuscula`) para que el nombre se lea con su caja: «SocialLab», no «SOCIALLAB».
+ */
+export interface TramoDeCaja { texto: string; minuscula: boolean }
+
+/** Parte el nombre en tramos de minúsculas y de todo lo demás, en orden: 'SocialLab' → S · ocial · L · ab. */
+export function tramosDeCaja(nombre: string): TramoDeCaja[] {
+  return (nombre.match(/[a-zà-ÿ]+|[^a-zà-ÿ]+/g) ?? []).map((t) => ({ texto: t, minuscula: /^[a-zà-ÿ]/.test(t) }));
+}

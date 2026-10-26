@@ -9,6 +9,7 @@ import Comentarios from './views/Comentarios';
 import Hoy from './views/Hoy';
 import { AvisoComentarios, ProveedorPulso, usePulso, type FocoAsesor } from './ui/Pulso';
 import Acciones from './views/Acciones';
+import { tramosDeCaja } from './logotipo';
 
 type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'acciones' | 'estadisticas' | 'calendario';
 /** `corta`: la etiqueta de la barra inferior del teléfono, donde caben seis pestañas. */
@@ -25,7 +26,12 @@ const PESTANAS: { id: Pestana; etiqueta: string; corta?: string; icono: React.El
  *  lockup del estudio (>UNREALVILLE studio): cada lab se firma con su propio nombre. */
 const Logo = () => (
   <div className="flex items-baseline gap-2 min-w-0">
-    <span className="lt-logotype lt-lab text-xl"><span className="lt-chevron">&gt;</span><span>SocialLab</span></span>
+    <span className="lt-logotype lt-lab text-xl" aria-label=">SocialLab">
+      <span className="lt-chevron" aria-hidden>&gt;</span>
+      {tramosDeCaja('SocialLab').map((t, i) => t.minuscula
+        ? <span key={i} className="lt-minuscula" aria-hidden>{t.texto}</span>
+        : <span key={i} aria-hidden>{t.texto}</span>)}
+    </span>
     <span className="hidden md:inline text-[10px] text-zinc-500">tablero de operadores</span>
   </div>
 );

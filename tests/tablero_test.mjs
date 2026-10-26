@@ -19,6 +19,7 @@ import {
   lectorDe, ultimasMetricas, viasPorCanal, viaDe, formatoDeFila, enlaceDeId, estadisticas, resumenCuenta, canalesPorMarca, ORIGEN_DETECTADO, TODAS, VISTA_TABLERO, FORMATO_SIN_TIPO,
 } from '../api/_opsCore.ts';
 import { combinarMetricas, aumentosDeComentarios, cuentasActivas, planDeLectura, fusionarLectura, haceCuanto, ultimaLecturaMedida } from '../src/pulso.ts';
+import { tramosDeCaja } from '../src/logotipo.ts';
 
 let fallos = 0;
 function test(nombre, fn) {
@@ -353,6 +354,15 @@ test('cuenta: seguidores, serie con días provisionales, totales, desgloses, blo
   assert.deepEqual(r.desgloses[0].valores, [{ valor: 'NON_FOLLOWER', total: 8 }, { valor: 'FOLLOWER', total: 5 }]);
   assert.deepEqual(r.bloqueadas.map((b) => [b.metric, b.min_followers]), [['follower_demographics', 100]], 'el umbral sale del catálogo');
   assert.deepEqual(r.sinDatos, [{ metric: 'saves', breakdown: '' }], 'sin valor y sin umbral es «sin datos», no cero');
+});
+
+test('logotipo: el nombre conserva su caja — las minúsculas van en tramos propios (Sam, 2026-10-26)', () => {
+  assert.deepEqual(tramosDeCaja('SocialLab'), [
+    { texto: 'S', minuscula: false }, { texto: 'ocial', minuscula: true },
+    { texto: 'L', minuscula: false }, { texto: 'ab', minuscula: true },
+  ]);
+  assert.equal(tramosDeCaja('SocialLab').map((t) => t.texto).join(''), 'SocialLab', 'no se pierde ni se duplica una letra');
+  assert.deepEqual(tramosDeCaja('IID'), [{ texto: 'IID', minuscula: false }]);
 });
 
 if (fallos) { console.error(`\ntablero: ${fallos} fallo(s)`); process.exit(1); }
