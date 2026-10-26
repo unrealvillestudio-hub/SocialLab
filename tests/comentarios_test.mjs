@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   estados, ordenar, objetivoDeRespuesta, mensajeValido, hayEnVuelo, verificada, MINUTOS_EN_VUELO,
-  privadaDisponible, objetivoDePrivada, ESTADOS_PENDIENTES, esTipoDeCierre,
+  privadaDisponible, objetivoDePrivada, ESTADOS_PENDIENTES, esTipoDeCierre, esRelacion, claveDeAutor,
 } from '../api/_commentsCore.ts';
 
 let fallos = 0;
@@ -160,6 +160,26 @@ test('8 · comentar en la publicación (Sam, 2026-10-26): alcance antes de escri
   assert.ok(/mcpLeer\(herramientas\.comment_read_tool/.test(f) && /verificada\(leida, id\)/.test(f), 'no verifica leyendo');
   assert.ok(f.indexOf('mcpLeer(herramientas.comment_read_tool') < f.indexOf("status: 'seguida'"), 'marca seguida antes de publicar');
   assert.ok(!/INSTAGRAM|FACEBOOK|ig_comment|fb_comment/.test(f), 'nombra una plataforma o una herramienta');
+});
+
+test('9 · allegados (Sam, 2026-10-26): su comentario queda allegado y fuera de lo pendiente; respondido y cerrado mandan', () => {
+  const cs = [c(1, { author_name: 'amiga' }), c(2, { author_name: 'clienta' }), c(3, { author_name: 'amiga' }), c(4, { author_name: null })];
+  const allegados = new Set([claveDeAutor('B', 'P', 'amiga')]);
+  const e = estados(cs, [{ id: 'r', post_comment_id: 3, status: 'verified', requested_at: '2026-10-25T12:00:00Z' }], new Set(), allegados);
+  assert.equal(e.get(1), 'allegado');
+  assert.equal(e.get(2), 'sin_responder');
+  assert.equal(e.get(3), 'respondido', 'respondido manda');
+  assert.equal(e.get(4), 'sin_responder', 'sin autor no se reconoce');
+  assert.equal(estados([c(1, { author_name: 'amiga', brand_id: 'OTRA' })], [], new Set(), allegados).get(1), 'sin_responder', 'la marca de otra marca no cuenta');
+  assert.ok(!ESTADOS_PENDIENTES.includes('allegado'));
+  assert.ok(esRelacion('equipo') && esRelacion('allegado') && !esRelacion('amigo'));
+});
+test('9 · handler: marcar allegado comprueba alcance y autor antes de escribir', () => {
+  const i = H.indexOf('async function allegado(');
+  const f = H.slice(i, H.indexOf('/**', i + 10));
+  const escribe = f.search(/marcarAllegado\(cuenta|quitarAllegado\(cuenta/);
+  assert.ok(f.indexOf('enAlcance(alcance, c.brand_id)') > 0 && f.indexOf('enAlcance(alcance, c.brand_id)') < escribe);
+  assert.ok(f.indexOf('if (!autor)') > 0 && f.indexOf('if (!autor)') < escribe);
 });
 
 if (fallos) { console.error(`\n${fallos} fallo(s)`); process.exit(1); }

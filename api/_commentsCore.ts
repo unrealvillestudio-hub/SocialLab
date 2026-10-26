@@ -18,6 +18,8 @@ export interface Comentario {
   parent_comment_id: string | null;
   from_brand: boolean;
   commented_at: string;
+  /** El autor tal como lo guarda el colector (en Instagram, el usuario). Para reconocer cuentas allegadas. */
+  author_name?: string | null;
 }
 
 export interface Respuesta {
@@ -32,11 +34,11 @@ export interface Respuesta {
 export type Clase = 'publica' | 'privada';
 const claseDe = (r: Respuesta): Clase => (r.kind === 'privada' ? 'privada' : 'publica');
 
-export type Estado = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'cerrado' | 'de_la_marca';
+export type Estado = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'cerrado' | 'allegado' | 'de_la_marca';
 
 /** El orden de la bandeja: lo que espera a alguien va primero. */
 export const ORDEN_DE_ESTADO: Readonly<Record<Estado, number>> = {
-  sin_responder: 0, fallida: 1, en_curso: 2, respondido: 3, cerrado: 4, de_la_marca: 5,
+  sin_responder: 0, fallida: 1, en_curso: 2, respondido: 3, cerrado: 4, allegado: 5, de_la_marca: 6,
 };
 
 /**
@@ -52,6 +54,16 @@ export const ESTADOS_PENDIENTES: readonly Estado[] = ['sin_responder', 'fallida'
  */
 export const TIPOS_DE_CIERRE = ['hecho', 'descartado', 'contestado_fuera'] as const;
 export type TipoCierre = (typeof TIPOS_DE_CIERRE)[number];
+/**
+ * Cuentas del equipo o allegadas (amigos y familia) de una marca (`content.brand_close_accounts`, Sam 2026-10-26): sus
+ * comentarios no esperan respuesta. Se reconocen por plataforma y autor.
+ */
+export const RELACIONES = ['equipo', 'allegado'] as const;
+export type Relacion = (typeof RELACIONES)[number];
+export const esRelacion = (v: unknown): v is Relacion => typeof v === 'string' && (RELACIONES as readonly string[]).includes(v);
+export const claveDeAutor = (brandId: string, platform: string, autor: string | null | undefined): string =>
+  `${brandId}|${platform}|${String(autor ?? '').trim()}`;
+
 export const esTipoDeCierre = (v: unknown): v is TipoCierre => typeof v === 'string' && (TIPOS_DE_CIERRE as readonly string[]).includes(v);
 
 /** Minutos durante los que una respuesta pedida o enviada bloquea otra al mismo comentario. */
@@ -70,10 +82,11 @@ export const objetivoDeRespuesta = hiloDe;
 /**
  * El estado de cada comentario. Cuenta como respondido si hay una respuesta verificada desde
  * SocialLab o si la marca contestó en el mismo hilo después del comentario, desde donde sea. Un comentario cerrado
- * en el tablero (`cerrados`) queda `cerrado`, salvo que además esté respondido.
+ * en el tablero (`cerrados`) queda `cerrado`, salvo que además esté respondido. El de una cuenta allegada o del equipo
+ * (`allegados`, claves de `claveDeAutor`) queda `allegado`: no espera respuesta.
  */
 export function estados(comentarios: readonly Comentario[], respuestas: readonly Respuesta[],
-  cerrados: ReadonlySet<number> = new Set()): Map<number, Estado> {
+  cerrados: ReadonlySet<number> = new Set(), allegados: ReadonlySet<string> = new Set()): Map<number, Estado> {
   const porComentario = new Map<number, Respuesta[]>();
   for (const r of respuestas) {
     const xs = porComentario.get(r.post_comment_id) ?? [];
@@ -96,6 +109,8 @@ export function estados(comentarios: readonly Comentario[], respuestas: readonly
       out.set(c.id, 'respondido');
     } else if (cerrados.has(c.id)) {
       out.set(c.id, 'cerrado');
+    } else if (c.author_name && allegados.has(claveDeAutor(c.brand_id, c.platform, c.author_name))) {
+      out.set(c.id, 'allegado');
     } else if (rs[0] && (rs[0].status === 'requested' || rs[0].status === 'sent')) {
       out.set(c.id, 'en_curso');
     } else if (rs[0]?.status === 'failed') {

@@ -24,6 +24,11 @@
  *                                `cierre` por comentario y su estado pasa a `cerrado`.
  *   POST { tipo: 'reabrir', post_comment_id }   deshace el cierre.
  *                                Responder o cerrar caduca las recomendaciones abiertas de ese comentario.
+ *   POST { tipo: 'allegado', post_comment_id, relation }   (Sam, 2026-10-26)
+ *                                marca a quien escribió ese comentario como cuenta del equipo o allegada de la marca
+ *                                (`relation` ∈ equipo | allegado): sus comentarios dejan de esperar respuesta (estado
+ *                                `allegado`) y el asesor no los considera. El GET trae `allegado` por comentario.
+ *   POST { tipo: 'quitar_allegado', post_comment_id }      deshace la marca.
  *   POST { tipo: 'comentar', scheduled_post_id, message, recomendacion_id? }
  *                                publica un comentario de la marca en SU publicación (Sam, 2026-10-26): abrir un debate,
  *                                mencionar a un aliado. La herramienta es dato (`signal_platforms.post_comment_tool`,
@@ -37,9 +42,10 @@
 import { ventana, enAlcance, marcasConsultadas, TODAS } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida, SB_URL, SB_KEY } from './_opsShared.js';
 import { leerCierres, cerrar, reabrir, caducarRecomendaciones } from './_cierres.js';
+import { leerAllegados, marcarAllegado, quitarAllegado } from './_allegados.js';
 import { idDePublicacion } from './_asesorCore.js';
 import {
-  esTipoDeCierre, estados, ordenar, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
+  esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
   type Comentario, type Respuesta, type Estado, type Clase,
 } from './_commentsCore.js';
 
@@ -108,8 +114,9 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
   const comentarios = await sbGet<FilaComentario>(
     `post_comments?select=${COLUMNAS_COMENTARIO}${filtro}&commented_at=gte.${encodeURIComponent(v.desde)}`
     + `&commented_at=lt.${encodeURIComponent(v.hasta)}&order=commented_at.desc&limit=${MAX_COMENTARIOS}`, 'content');
-  const [respuestas, cierres] = await Promise.all([respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id))]);
-  const est = estados(comentarios, respuestas, new Set(cierres.keys()));
+  const [respuestas, cierres, allegados] = await Promise.all([
+    respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id)), leerAllegados(marcas)]);
+  const est = estados(comentarios, respuestas, new Set(cierres.keys()), new Set(allegados.keys()));
   const plataformas = await sbGet<Plataforma>(`signal_platforms?select=${COLUMNAS_PLATAFORMA}&active=is.true`, 'intel');
   const ventanaDe = new Map(plataformas.map((p) => [p.platform, p.private_reply_window_minutes && p.private_reply_tool ? p.private_reply_window_minutes : null]));
   const ahora = Date.now();
@@ -117,6 +124,7 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
   for (const r of respuestas) porComentario.set(r.post_comment_id, [...(porComentario.get(r.post_comment_id) ?? []), r]);
   const filas = ordenar(comentarios.map((c) => ({
     ...c, estado: est.get(c.id) as Estado, respuestas: porComentario.get(c.id) ?? [], cierre: cierres.get(c.id) ?? null,
+    allegado: c.author_name ? allegados.get(claveDeAutor(c.brand_id, c.platform, c.author_name as string))?.relation ?? null : null,
     privada: privadaDisponible(c, porComentario.get(c.id) ?? [], ventanaDe.get(c.platform) ?? null, ahora),
   })));
   const pendientes = filas.filter((f) => f.estado === 'sin_responder' || f.estado === 'fallida').length;
@@ -229,6 +237,23 @@ async function cierre(cuerpo: any, sub: string, alcance: typeof TODAS | string[]
   return r.ok ? { status: 200, body: { cierre: r.cierre } } : { status: r.status, body: { error: r.error } };
 }
 
+/** Marca o desmarca como allegada la cuenta que escribió un comentario del alcance (Sam, 2026-10-26). */
+async function allegado(cuerpo: any, sub: string, alcance: typeof TODAS | string[]) {
+  const id = Number(cuerpo?.post_comment_id);
+  if (!Number.isInteger(id) || id <= 0) return { status: 400, body: { error: 'post_comment_id inválido' } };
+  const quita = cuerpo?.tipo === 'quitar_allegado';
+  if (!quita && !esRelacion(cuerpo?.relation)) return { status: 400, body: { error: 'relation debe ser equipo o allegado' } };
+  const [c] = await sbGet<FilaComentario>(`post_comments?select=id,brand_id,platform,author_name,from_brand&id=eq.${id}`, 'content');
+  if (!c || !enAlcance(alcance, c.brand_id)) return { status: 404, body: { error: 'comentario no encontrado' } };
+  if (c.from_brand) return { status: 422, body: { error: 'ese comentario es de la propia marca' } };
+  const autor = typeof c.author_name === 'string' ? c.author_name.trim() : '';
+  if (!autor) return { status: 422, body: { error: 'la plataforma no dio el autor de este comentario: no se puede marcar' } };
+  const cuenta = { brand_id: c.brand_id, platform: c.platform, author_name: autor };
+  const r = quita ? await quitarAllegado(cuenta) : await marcarAllegado(cuenta, cuerpo.relation, sub);
+  if (r.ok && !quita) await caducarRecomendaciones(id, `sistema: cuenta ${cuerpo.relation} marcada por ${sub}`);
+  return r.ok ? { status: 200, body: { ok: true } } : { status: r.status, body: { error: r.error } };
+}
+
 /**
  * Un comentario de la marca en su propia publicación (Sam, 2026-10-26). Alcance antes de escribir; la herramienta sale
  * de la tabla; se verifica leyéndolo. No hay registro en `comment_replies` (no responde a nadie): queda en el consejo
@@ -310,6 +335,8 @@ export default async function handler(req: any, res: any) {
     const cuerpo = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
     const r = cuerpo?.tipo === 'cierre' || cuerpo?.tipo === 'reabrir'
       ? await cierre(cuerpo, puerta.sesion.sub, puerta.alcance)
+      : cuerpo?.tipo === 'allegado' || cuerpo?.tipo === 'quitar_allegado'
+        ? await allegado(cuerpo, puerta.sesion.sub, puerta.alcance)
       : cuerpo?.tipo === 'comentar'
         ? await comentarEnPublicacion(cuerpo, puerta.sesion.sub, puerta.alcance)
         : await responder(cuerpo, puerta.sesion.sub, puerta.alcance);
