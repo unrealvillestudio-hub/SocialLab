@@ -40,13 +40,14 @@
  * de la tabla.
  */
 import { ventana, enAlcance, marcasConsultadas, TODAS } from './_opsCore.js';
-import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida, SB_URL, SB_KEY } from './_opsShared.js';
+import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida } from './_opsShared.js';
 import { leerCierres, cerrar, reabrir, caducarRecomendaciones } from './_cierres.js';
 import { leerAllegados, marcarAllegado, quitarAllegado } from './_allegados.js';
 import { idDePublicacion } from './_asesorCore.js';
+import { sbEscribir, EscrituraFallida, catalogoDeIntenciones, metasDeRespuesta } from './_bandejaShared.js';
 import {
-  esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, clasificador, metaDe, minutosHastaRespuesta, tiemposDeRespuesta, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
-  type Comentario, type Respuesta, type Estado, type Clase, type MetaDeRespuesta, type Intencion, type PatronDeIntencion,
+  esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, metaDe, minutosHastaRespuesta, tiemposDeRespuesta, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
+  type Comentario, type Respuesta, type Estado, type Clase,
 } from './_commentsCore.js';
 
 const MAX_COMENTARIOS = 1000;
@@ -57,35 +58,6 @@ const q = (req: any, k: string): string | null => {
   const s = Array.isArray(v) ? v[0] : v;
   return typeof s === 'string' && s.trim() ? s.trim() : null;
 };
-
-class EscrituraFallida extends Error {
-  ruta: string;
-  constructor(ruta: string, detalle: string) {
-    super(`ESCRITURA_FALLIDA: ${ruta} — ${detalle}`);
-    this.name = 'EscrituraFallida';
-    this.ruta = ruta;
-  }
-}
-
-/** POST o PATCH a PostgREST con `service_role`. Devuelve las filas escritas. */
-async function sbEscribir<T>(metodo: 'POST' | 'PATCH', ruta: string, cuerpo: unknown, perfil: string): Promise<T[]> {
-  let res: Response;
-  try {
-    res = await fetch(`${SB_URL()}/rest/v1/${ruta}`, {
-      method: metodo,
-      headers: {
-        apikey: SB_KEY(), Authorization: `Bearer ${SB_KEY()}`, 'Content-Profile': perfil,
-        'Content-Type': 'application/json', Prefer: 'return=representation',
-      },
-      body: JSON.stringify(cuerpo),
-    });
-  } catch (err) {
-    throw new EscrituraFallida(ruta, `la petición no llegó: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  if (!res.ok) throw new EscrituraFallida(ruta, `HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 300)}`);
-  const data = await res.json().catch(() => []);
-  return (Array.isArray(data) ? data : [data]) as T[];
-}
 
 const COLUMNAS_COMENTARIO = [
   'id', 'platform', 'platform_comment_id', 'scheduled_post_id', 'brand_id', 'platform_post_id', 'parent_comment_id',
@@ -135,40 +107,6 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
   const pendientes = filas.filter((f) => f.estado === 'sin_responder' || f.estado === 'fallida').length;
   return { ventana: v, total: filas.length, pendientes, truncado: comentarios.length >= MAX_COMENTARIOS, comentarios: filas,
     tiempos: tiemposDeRespuesta(filas, minutos, meta, ahora) };
-}
-
-/**
- * El catálogo de intenciones (unrlvl-iid-functions, migración 20261026233000): las activas y los patrones comunes y de
- * las marcas consultadas. Sin la migración, no hay intenciones y la bandeja ordena como antes.
- */
-async function catalogoDeIntenciones(marcas: typeof TODAS | string[]) {
-  const filtro = marcas === TODAS ? '' : `&or=(brand_id.is.null,brand_id.${enLista(marcas)})`;
-  const [intenciones, patrones] = await Promise.all([
-    sbGet<Intencion>('comment_intents?select=intent_key,label,priority,display_color,fallback&active=is.true', 'intel'),
-    sbGet<PatronDeIntencion>(`comment_intent_patterns?select=intent_key,brand_id,pattern${filtro}`, 'intel'),
-  ]).catch((e) => {
-    console.error(`[comentarios] intenciones sin leer: ${e instanceof Error ? e.message : e}`);
-    return [[], []] as [Intencion[], PatronDeIntencion[]];
-  });
-  const c = clasificador(intenciones, patrones);
-  for (const p of c.invalidos) console.error(`[comentarios] patrón de intención que no compila (${p.intent_key}): ${p.pattern}`);
-  return c;
-}
-
-/**
- * La meta de respuesta (unrlvl-iid-functions, migración 20261026230000): las de cada marca y la de por defecto. Sin la
- * migración no hay metas: el tablero mide igual, sin comparar.
- */
-async function metasDeRespuesta(marcas: typeof TODAS | string[]): Promise<{ metas: MetaDeRespuesta[]; porDefecto: number | null }> {
-  const filtro = marcas === TODAS ? '' : `&brand_id=${enLista(marcas)}`;
-  const [metas, conf] = await Promise.all([
-    sbGet<MetaDeRespuesta>(`brand_response_targets?select=brand_id,platform,target_minutes${filtro}`, 'intel').catch((e) => {
-      console.error(`[comentarios] metas de respuesta sin leer: ${e instanceof Error ? e.message : e}`); return [] as MetaDeRespuesta[];
-    }),
-    sbGet<{ value: unknown }>('signal_collector_config?key=eq.response_target_minutes&select=value', 'intel').catch(() => []),
-  ]);
-  const d = Number(conf[0]?.value);
-  return { metas, porDefecto: Number.isFinite(d) && d > 0 ? d : null };
 }
 
 // ── POST ──────────────────────────────────────────────────────────────────────
