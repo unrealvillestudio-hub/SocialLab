@@ -5,7 +5,7 @@
  *   3 · el operador sólo pide vista · seguida · descartada; `resuelta` es del sistema; abrir dos veces no cambia nada.
  */
 import assert from 'node:assert/strict';
-import { visiblePara, ordenarTarjetas, cambioDeEstado, cambioDeRecomendacion, textoEnviado } from '../api/_asesorCore.ts';
+import { visiblePara, ordenarTarjetas, cambioDeEstado, cambioDeRecomendacion, textoEnviado, estadoDePedidos, idDeComentario } from '../api/_asesorCore.ts';
 import { agruparTarjetas, severidadMayor } from '../src/asesor.ts';
 
 let fallos = 0;
@@ -68,6 +68,32 @@ test('5 · recomendaciones: el operador sólo sigue o descarta; caducada es del 
   assert.equal(textoEnviado(''), null);
   assert.equal(textoEnviado(42), null);
   assert.equal(textoEnviado('x'.repeat(6000)).length, 5000);
+});
+
+test('consejo por comentario · el último pedido de cada comentario dice cómo va, sin nada del despertar', () => {
+  const f = (id, status, recommendations, created_at) => ({ post_comment_id: id, status, recommendations, created_at });
+  const r = estadoDePedidos([
+    f(7, 'hecho', 0, '2026-10-26T10:00:00Z'), f(7, 'pendiente', 0, '2026-10-26T11:00:00Z'),
+    f('8', 'hecho', 1, '2026-10-26T10:00:00Z'),
+    f(9, 'omitido', 0, '2026-10-26T10:00:00Z'), f(10, 'fallido', 0, '2026-10-26T10:00:00Z'),
+    f(null, 'pendiente', 0, '2026-10-26T12:00:00Z'),
+  ]);
+  const m = new Map(r.map((x) => [x.post_comment_id, x.estado]));
+  assert.equal(m.get(7), 'pendiente', 'manda el más reciente');
+  assert.equal(m.get(8), 'con_consejo');
+  assert.equal(m.get(9), 'sin_consejo');
+  assert.equal(m.get(10), 'sin_consejo');
+  assert.equal(m.size, 4, 'un despertar de la marca (sin comentario) no es un pedido');
+  for (const x of r) assert.deepEqual(Object.keys(x).sort(), ['estado', 'post_comment_id'], 'sale algo del despertar');
+});
+
+test('consejo por comentario · el id del cuerpo: entero positivo, ausente o inválido', () => {
+  assert.equal(idDeComentario(undefined), null);
+  assert.equal(idDeComentario(null), null);
+  assert.equal(idDeComentario(''), null);
+  assert.equal(idDeComentario(42), 42);
+  assert.equal(idDeComentario('42'), 42);
+  for (const v of [0, -1, 1.5, '4a', 'x', {}, Number.MAX_SAFE_INTEGER + 2]) assert.equal(idDeComentario(v), undefined, String(v));
 });
 
 if (fallos) { console.error(`\nasesor: ${fallos} fallo(s)`); process.exit(1); }

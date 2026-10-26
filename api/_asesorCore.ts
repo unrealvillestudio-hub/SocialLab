@@ -80,6 +80,40 @@ export function cambioDeRecomendacion(actual: string, nuevo: string): { error: s
   return { ok: true };
 }
 
+// ── Consejo pedido sobre un comentario (Sam, 2026-10-26) ────────────────────────────────────────
+//
+// El operador pide consejo sobre UN comentario: SocialLab inserta un despertar `a_pedido` con su
+// `post_comment_id` (`intel.social_advisor_wakes`, unrlvl-iid-functions #496). Al tablero sólo le llega
+// cómo va cada pedido, sin nada del despertar (costo, tokens, modelo, error interno).
+
+export type EstadoPedido = 'pendiente' | 'sin_consejo' | 'con_consejo';
+export interface PedidoFila { post_comment_id: number | string | null; status: string; recommendations: number | null; created_at: string }
+
+/**
+ * El último pedido de cada comentario: `pendiente` mientras el asesor no lo atendió; `con_consejo` si dejó
+ * recomendación; `sin_consejo` si terminó sin ella (omitido, fallido o sin recomendación válida).
+ */
+export function estadoDePedidos(filas: readonly PedidoFila[]): Array<{ post_comment_id: number; estado: EstadoPedido }> {
+  const ultimo = new Map<number, PedidoFila>();
+  for (const f of filas) {
+    const id = Number(f.post_comment_id);
+    if (f.post_comment_id == null || !Number.isFinite(id)) continue;
+    const prev = ultimo.get(id);
+    if (!prev || f.created_at > prev.created_at) ultimo.set(id, f);
+  }
+  return [...ultimo.entries()].map(([id, f]) => ({
+    post_comment_id: id,
+    estado: f.status === 'pendiente' ? 'pendiente' : f.status === 'hecho' && Number(f.recommendations) > 0 ? 'con_consejo' : 'sin_consejo',
+  }));
+}
+
+/** El id de un comentario recibido en el cuerpo: entero positivo, o null si no vino. `undefined` = inválido. */
+export function idDeComentario(v: unknown): number | null | undefined {
+  if (v === undefined || v === null || v === '') return null;
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN;
+  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
+}
+
 /** Lo que se envió de verdad: recortado y con tope, o null si no se envió nada. */
 export function textoEnviado(v: unknown, max = 5000): string | null {
   if (typeof v !== 'string') return null;
