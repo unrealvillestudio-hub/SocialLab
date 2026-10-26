@@ -5,7 +5,8 @@
  *   3 · el operador sólo pide vista · seguida · descartada; `resuelta` es del sistema; abrir dos veces no cambia nada.
  */
 import assert from 'node:assert/strict';
-import { visiblePara, ordenarTarjetas, cambioDeEstado, cambioDeRecomendacion, textoEnviado, estadoDePedidos, idDeComentario } from '../api/_asesorCore.ts';
+import { readFileSync } from 'node:fs';
+import { visiblePara, ordenarTarjetas, cambioDeEstado, cambioDeRecomendacion, textoEnviado, estadoDePedidos, idDeComentario, estadoDePedidosDePublicacion, idDePublicacion } from '../api/_asesorCore.ts';
 import { agruparTarjetas, severidadMayor } from '../src/asesor.ts';
 
 let fallos = 0;
@@ -94,6 +95,32 @@ test('consejo por comentario · el id del cuerpo: entero positivo, ausente o inv
   assert.equal(idDeComentario(42), 42);
   assert.equal(idDeComentario('42'), 42);
   for (const v of [0, -1, 1.5, '4a', 'x', {}, Number.MAX_SAFE_INTEGER + 2]) assert.equal(idDeComentario(v), undefined, String(v));
+});
+
+test('pedido por publicación: el último de cada publicación; los de comentario no cuentan (Sam, 2026-10-26)', () => {
+  const r = estadoDePedidosDePublicacion([
+    { post_comment_id: null, scheduled_post_id: 'p1', status: 'hecho', recommendations: 2, created_at: '2026-10-26T10:00:00Z' },
+    { post_comment_id: null, scheduled_post_id: 'p1', status: 'pendiente', recommendations: null, created_at: '2026-10-26T11:00:00Z' },
+    { post_comment_id: null, scheduled_post_id: 'p2', status: 'hecho', recommendations: 0, created_at: '2026-10-26T10:00:00Z' },
+    { post_comment_id: 7, scheduled_post_id: null, status: 'hecho', recommendations: 1, created_at: '2026-10-26T10:00:00Z' },
+    { post_comment_id: 9, status: 'hecho', recommendations: 1, created_at: '2026-10-26T10:00:00Z' },
+  ]);
+  assert.deepEqual(r.sort((a, b) => a.scheduled_post_id.localeCompare(b.scheduled_post_id)),
+    [{ scheduled_post_id: 'p1', estado: 'pendiente' }, { scheduled_post_id: 'p2', estado: 'sin_consejo' }]);
+});
+test('idDePublicacion: uuid o nada; cualquier otra cosa es inválida', () => {
+  assert.equal(idDePublicacion(undefined), null);
+  assert.equal(idDePublicacion(''), null);
+  assert.equal(idDePublicacion('2D3B1C4A-0000-4000-8000-000000000001'), '2d3b1c4a-0000-4000-8000-000000000001');
+  assert.equal(idDePublicacion('p1'), undefined);
+  assert.equal(idDePublicacion("1' or 1=1"), undefined);
+  assert.equal(idDePublicacion(42), undefined);
+});
+test('handler: «hecho» sobre el consejo de un comentario lo cierra; el despertar acepta una publicación de esa marca', () => {
+  const H = readFileSync(new URL('../api/tarjetas.ts', import.meta.url), 'utf8');
+  assert.ok(/nuevo === 'seguida' && typeof comentario === 'number'/.test(H) && /cerrar\(comentario, 'hecho', sub, id\)/.test(H));
+  assert.ok(/scheduled_posts\?select=brand_id&id=eq\.\$\{publicacion\}/.test(H) && /p\.brand_id !== marca/.test(H),
+    'la publicación pedida no se comprueba contra la marca');
 });
 
 if (fallos) { console.error(`\nasesor: ${fallos} fallo(s)`); process.exit(1); }

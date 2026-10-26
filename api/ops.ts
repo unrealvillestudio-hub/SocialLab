@@ -64,8 +64,22 @@ function plataformasEnVivo(c: Cuenta | undefined): string[] {
   return Object.entries(LECTORES_EN_VIVO).filter(([, l]) => c[l.columnaCuenta] != null && c[l.columnaCuenta] !== '').map(([p]) => p);
 }
 
+/**
+ * El color de cada plataforma (`intel.signal_platforms.display_color`, Sam 2026-10-26). Antes de la migración la columna
+ * no existe: el tablero las ve neutras, no deja de cargar.
+ */
+async function coloresDePlataforma(): Promise<{ platform: string; color: string | null }[]> {
+  try {
+    const filas = await sbGet<{ platform: string; display_color: string | null }>('signal_platforms?select=platform,display_color', 'intel');
+    return filas.map((f) => ({ platform: f.platform, color: f.display_color ?? null }));
+  } catch (err) {
+    console.error(`[ops] colores de plataforma sin leer: ${err instanceof Error ? err.message : err}`);
+    return [];
+  }
+}
+
 async function catalogo(alcance: Alcance) {
-  const cuentas = await cuentasDe(alcance);
+  const [cuentas, plataformas] = await Promise.all([cuentasDe(alcance), coloresDePlataforma()]);
   const ids = alcance === TODAS ? [...new Set(cuentas.map((c) => c.brand_id))] : alcance;
   const marcas = ids.length
     ? await sbGet<{ id: string; display_name: string | null; publish_timezone: string | null }>(
@@ -85,6 +99,7 @@ async function catalogo(alcance: Alcance) {
       canales: canales.get(id) ?? [],
     })).sort((a, b) => a.nombre.localeCompare(b.nombre)),
     alcance_total: alcance === TODAS,
+    plataformas,
   };
 }
 
@@ -294,6 +309,16 @@ async function estadisticasVista(req: any, marcas: typeof TODAS | string[]) {
 const MAX_FILAS_CUENTA = 20_000;
 const PAGINA_CUENTA = 1000;
 
+/** El catálogo de métricas de cuenta. `aggregation` (sum | last, #499) puede no existir todavía: sin ella, todo suma. */
+async function catalogoDeCuenta(): Promise<MetricaCatalogo[]> {
+  const base = 'signal_account_metrics?active=is.true&select=platform,metric,breakdown,read_as,min_followers,notes';
+  try { return await sbGet<MetricaCatalogo>(`${base},aggregation`, 'intel'); }
+  catch (err) {
+    console.error(`[ops] catálogo de cuenta sin aggregation: ${err instanceof Error ? err.message : err}`);
+    return sbGet<MetricaCatalogo>(base, 'intel');
+  }
+}
+
 /**
  * Lo que SignalLab mide de la CUENTA en la ventana (`content.account_metric_daily`), con su catálogo y
  * los días de relectura de su configuración. Si la tabla no existe, `pendiente`; nunca ceros.
@@ -302,7 +327,7 @@ async function cuentaDe(v: { desde: string; hasta: string }, marcas: typeof TODA
   const desde = v.desde.slice(0, 10), hasta = v.hasta.slice(0, 10);
   try {
     const [catalogoCuenta, config] = await Promise.all([
-      sbGet<MetricaCatalogo>('signal_account_metrics?active=is.true&select=platform,metric,breakdown,read_as,min_followers,notes', 'intel'),
+      catalogoDeCuenta(),
       sbGet<{ value: unknown }>('signal_collector_config?key=eq.account_series_days&select=value', 'intel'),
     ]);
     const relectura = Number(config[0]?.value);

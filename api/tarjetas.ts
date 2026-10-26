@@ -15,6 +15,10 @@
  *   POST { tipo: 'despertar', marca, post_comment_id }     → consejo sobre ESE comentario (Sam, 2026-10-26): el
  *                               asesor lo atiende aunque tenga más de 72 h. 409 si ya hay un pedido en cola
  *                               para él. El GET trae `pedidos`: cómo va el último pedido de cada comentario.
+ *   POST { tipo: 'despertar', marca, scheduled_post_id }   → consejo sobre ESA publicación (Sam, 2026-10-26), desde
+ *                               Publicado o Acciones. El GET trae `pedidos_publicacion`.
+ *   «Hecho» (`seguida`) en una recomendación de un comentario cierra el comentario como `hecho` (2026-10-26): sale de la
+ *                               bandeja y el asesor no lo vuelve a proponer.
  * Costos, tokens y modelo viven en `social_advisor_wakes` y NUNCA salen de aquí: el operador puede ser
  * del cliente.
  *
@@ -23,8 +27,9 @@
  */
 import { marcasConsultadas, TODAS } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, LecturaFallida, SB_URL, SB_KEY } from './_opsShared.js';
+import { cerrar } from './_cierres.js';
 import {
-  cambioDeEstado, cambioDeRecomendacion, estadoDePedidos, idDeComentario, ordenarTarjetas, textoEnviado, visiblePara,
+  cambioDeEstado, cambioDeRecomendacion, estadoDePedidos, estadoDePedidosDePublicacion, idDeComentario, idDePublicacion, ordenarTarjetas, textoEnviado, visiblePara,
   ESTADOS_ABIERTOS, RECOMENDACIONES_VISIBLES, type AccionTipo, type PedidoFila, type TarjetaFila,
 } from './_asesorCore.js';
 
@@ -49,13 +54,21 @@ const DIAS_PEDIDOS = 7;
  */
 async function pedidos(marcas: typeof TODAS | string[]) {
   const desde = new Date(Date.now() - DIAS_PEDIDOS * 86_400_000).toISOString();
+  const cola = `&created_at=gte.${encodeURIComponent(desde)}${filtroMarcas(marcas)}&order=created_at.desc&limit=500`;
   try {
-    const filas = await sbGet<PedidoFila>(`social_advisor_wakes?select=post_comment_id,status,recommendations,created_at`
-      + `&post_comment_id=not.is.null&created_at=gte.${encodeURIComponent(desde)}${filtroMarcas(marcas)}&order=created_at.desc&limit=500`, 'intel');
-    return estadoDePedidos(filas);
+    let filas: PedidoFila[];
+    try {
+      filas = await sbGet<PedidoFila>(`social_advisor_wakes?select=post_comment_id,scheduled_post_id,status,recommendations,created_at`
+        + `&or=(post_comment_id.not.is.null,scheduled_post_id.not.is.null)${cola}`, 'intel');
+    } catch (e) {
+      // Antes de la migración de pedidos por publicación (#499) la columna no existe: los de comentario siguen.
+      console.error(`[asesor] pedidos por publicación sin leer: ${e instanceof Error ? e.message : e}`);
+      filas = await sbGet<PedidoFila>(`social_advisor_wakes?select=post_comment_id,status,recommendations,created_at&post_comment_id=not.is.null${cola}`, 'intel');
+    }
+    return { comentarios: estadoDePedidos(filas), publicaciones: estadoDePedidosDePublicacion(filas) };
   } catch (e) {
     console.error(`[asesor] pedidos de consejo sin leer: ${e instanceof Error ? e.message : e}`);
-    return [];
+    return { comentarios: [], publicaciones: [] };
   }
 }
 
@@ -92,7 +105,7 @@ async function listar(req: any, marcas: typeof TODAS | string[], alcanceTotal: b
       return { ...r, accion: a ? { label: a.label, via: a.via } : { label: r.action_key, via: 'app_nativa' } };
     });
   return { truncado, nuevas: visibles.filter((t) => t.status === 'nueva').length, tarjetas: ordenarTarjetas(visibles), recomendaciones,
-    pedidos: pedidosDeConsejo };
+    pedidos: pedidosDeConsejo.comentarios, pedidos_publicacion: pedidosDeConsejo.publicaciones };
 }
 
 /** PATCH condicionado al estado leído: si otro operador lo cambió entretanto, devuelve [] (→ 409). */
@@ -123,6 +136,15 @@ async function cambiarRecomendacion(cuerpo: any, sub: string, alcance: typeof TO
   const filas = await patchCondicionado<RecoFila>('social_advisor_recommendations', id, r.status,
     { status: nuevo, status_by: sub, status_at: new Date().toISOString(), ...(enviado ? { sent_text: enviado } : {}) });
   if (!filas.length) return { status: 409, body: { error: 'la recomendación cambió de estado mientras tanto; vuelve a cargarla' } };
+  // «Hecho» sobre el consejo de un comentario: el comentario queda atendido (Sam, 2026-10-26). Si ya estaba cerrado o
+  // la tabla aún no existe, la recomendación igual queda seguida: se registra y se sigue.
+  const comentario = idDeComentario(r.post_comment_id);
+  if (nuevo === 'seguida' && typeof comentario === 'number') {
+    try {
+      const c = await cerrar(comentario, 'hecho', sub, id);
+      if (!c.ok && c.status !== 409) console.error(`[asesor] cerrar el comentario ${comentario}: ${c.error}`);
+    } catch (e) { console.error(`[asesor] cerrar el comentario ${comentario}: ${e instanceof Error ? e.message : e}`); }
+  }
   return { status: 200, body: { recomendacion: filas[0] } };
 }
 
@@ -136,6 +158,13 @@ async function despertar(cuerpo: any, sub: string, alcance: typeof TODAS | strin
   if (alcance !== TODAS && !alcance.includes(marca)) return { status: 403, body: { error: 'forbidden: esa marca no está en tu alcance' } };
   const comentario = idDeComentario(cuerpo?.post_comment_id);
   if (comentario === undefined) return { status: 400, body: { error: 'post_comment_id inválido' } };
+  const publicacion = idDePublicacion(cuerpo?.scheduled_post_id);
+  if (publicacion === undefined) return { status: 400, body: { error: 'scheduled_post_id inválido' } };
+  if (comentario !== null && publicacion !== null) return { status: 400, body: { error: 'pide consejo sobre un comentario o sobre una publicación, no ambos' } };
+  if (publicacion !== null) {
+    const [p] = await sbGet<{ brand_id: string }>(`scheduled_posts?select=brand_id&id=eq.${publicacion}`);
+    if (!p || p.brand_id !== marca) return { status: 404, body: { error: 'publicación no encontrada' } };
+  }
   if (comentario !== null) {
     // El comentario tiene que ser de esa marca y de un tercero: de otra marca responde igual que inexistente.
     const [c] = await sbGet<{ brand_id: string; from_brand: boolean }>(`post_comments?select=brand_id,from_brand&id=eq.${comentario}`, 'content');
@@ -149,7 +178,7 @@ async function despertar(cuerpo: any, sub: string, alcance: typeof TODAS | strin
       'Content-Type': 'application/json', Prefer: 'return=minimal',
     },
     body: JSON.stringify({ brand_id: marca, reasons: ['a_pedido'], requested_by: sub, status: 'pendiente',
-      ...(comentario !== null ? { post_comment_id: comentario } : {}) }),
+      ...(comentario !== null ? { post_comment_id: comentario } : {}), ...(publicacion !== null ? { scheduled_post_id: publicacion } : {}) }),
   });
   if (!res.ok) {
     const detalle = await res.text().catch(() => '');
@@ -157,7 +186,11 @@ async function despertar(cuerpo: any, sub: string, alcance: typeof TODAS | strin
     if (res.status === 409 || detalle.includes('23505')) {
       return { status: 409, body: { error: comentario !== null
         ? 'ya pediste consejo sobre este comentario: llega en unos minutos'
+        : publicacion !== null ? 'ya pediste consejo sobre esta publicación: llega en unos minutos'
         : 'ya hay un pedido de consejo en cola para esta marca' } };
+    }
+    if (publicacion !== null && detalle.includes('PGRST204')) {
+      return { status: 503, body: { error: 'pedir consejo sobre una publicación todavía no está disponible: falta aplicar su migración' } };
     }
     throw new LecturaFallida('social_advisor_wakes (POST)', `HTTP ${res.status} ${detalle.slice(0, 300)}`);
   }

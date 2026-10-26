@@ -32,12 +32,27 @@ export interface Respuesta {
 export type Clase = 'publica' | 'privada';
 const claseDe = (r: Respuesta): Clase => (r.kind === 'privada' ? 'privada' : 'publica');
 
-export type Estado = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'de_la_marca';
+export type Estado = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'cerrado' | 'de_la_marca';
 
 /** El orden de la bandeja: lo que espera a alguien va primero. */
 export const ORDEN_DE_ESTADO: Readonly<Record<Estado, number>> = {
-  sin_responder: 0, fallida: 1, en_curso: 2, respondido: 3, de_la_marca: 4,
+  sin_responder: 0, fallida: 1, en_curso: 2, respondido: 3, cerrado: 4, de_la_marca: 5,
 };
+
+/**
+ * Lo que la bandeja muestra por defecto (Sam, 2026-10-26: «tan pronto respondamos la tarjeta se libera hasta que
+ * esa misma persona vuelva a comentar»). Lo respondido —también lo enviado que aún se verifica—, y lo cerrado, sale; un
+ * comentario nuevo es otra fila y entra. Una respuesta fallida vuelve: no salió.
+ */
+export const ESTADOS_PENDIENTES: readonly Estado[] = ['sin_responder', 'fallida'];
+
+/**
+ * Cómo se cierra un comentario sin responderlo desde el tablero (`content.post_comment_closures.kind`):
+ * `hecho` (la acción se hizo, p. ej. fijarlo en la app), `descartado` (no es viable) o `contestado_fuera`.
+ */
+export const TIPOS_DE_CIERRE = ['hecho', 'descartado', 'contestado_fuera'] as const;
+export type TipoCierre = (typeof TIPOS_DE_CIERRE)[number];
+export const esTipoDeCierre = (v: unknown): v is TipoCierre => typeof v === 'string' && (TIPOS_DE_CIERRE as readonly string[]).includes(v);
 
 /** Minutos durante los que una respuesta pedida o enviada bloquea otra al mismo comentario. */
 export const MINUTOS_EN_VUELO = 10;
@@ -54,9 +69,11 @@ export const objetivoDeRespuesta = hiloDe;
 
 /**
  * El estado de cada comentario. Cuenta como respondido si hay una respuesta verificada desde
- * SocialLab o si la marca contestó en el mismo hilo después del comentario, desde donde sea.
+ * SocialLab o si la marca contestó en el mismo hilo después del comentario, desde donde sea. Un comentario cerrado
+ * en el tablero (`cerrados`) queda `cerrado`, salvo que además esté respondido.
  */
-export function estados(comentarios: readonly Comentario[], respuestas: readonly Respuesta[]): Map<number, Estado> {
+export function estados(comentarios: readonly Comentario[], respuestas: readonly Respuesta[],
+  cerrados: ReadonlySet<number> = new Set()): Map<number, Estado> {
   const porComentario = new Map<number, Respuesta[]>();
   for (const r of respuestas) {
     const xs = porComentario.get(r.post_comment_id) ?? [];
@@ -77,6 +94,8 @@ export function estados(comentarios: readonly Comentario[], respuestas: readonly
     const t = Date.parse(c.commented_at);
     if (rs.some((r) => r.status === 'verified') || (ultimaDeLaMarca.get(`${c.platform}|${hiloDe(c)}`) ?? -Infinity) > t) {
       out.set(c.id, 'respondido');
+    } else if (cerrados.has(c.id)) {
+      out.set(c.id, 'cerrado');
     } else if (rs[0] && (rs[0].status === 'requested' || rs[0].status === 'sent')) {
       out.set(c.id, 'en_curso');
     } else if (rs[0]?.status === 'failed') {

@@ -3,7 +3,7 @@ import { Check, Copy, ExternalLink, Lock, RefreshCw, Send, X } from 'lucide-reac
 import { ops, responderComentario, ErrorApi, type Marca, type Publicada, type Recomendacion, type RespPublicado, type Tarjeta } from '../api';
 import { claveDeCuenta } from '../asesor';
 import { usePulso, PillsDePost, type FocoAsesor } from '../ui/Pulso';
-import { Aviso, Chip, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
+import { Aviso, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
 
 /**
  * ACCIONES · el asesor (Fase 4; tarjetas de SignalLab, `intel.signal_cards`). Sam, 2026-10-25: «un community
@@ -13,6 +13,10 @@ import { Aviso, Chip, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '.
  *   · `app_nativa` → enlace a la publicación, para hacerlo en la app de la plataforma;
  *   · `interna`    → sólo la ve quien tiene alcance total (aprendizaje del estudio).
  * «Seguir» y «Descartar» quedan registrados con quién y cuándo; «resuelta» la pone el sistema.
+ *
+ * (Sam, 2026-10-26) «Hecho» sobre el consejo de un comentario cierra el comentario: sale de la bandeja y el asesor no lo
+ * vuelve a proponer. Cada publicación lleva «Pedir consejo sobre esta publicación» (también desde Publicado) y el color
+ * de su plataforma.
  */
 
 const DIA = 86_400_000;
@@ -92,17 +96,26 @@ export default function Acciones({ token, marca, plataforma, marcas, foco, onQui
       {pedido && <Aviso tono={pedido.ok ? 'info' : 'error'}>{pedido.texto}</Aviso>}
       {foco && (
         <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 text-xs text-zinc-300">
-          <ChevronAsesor className="w-3.5 h-3.5 text-accent" /> Abierto desde su pill: aparece primero.
+          <ChevronAsesor className="w-3.5 h-3.5 text-accent" /> Abierto desde su publicación: aparece primero.
           <button onClick={onQuitarFoco} className="ml-auto underline text-accent">Quitar</button>
         </div>
       )}
-      {grupos.length === 0 && (
+      {/* Abierta desde Publicado sin consejos todavía: la publicación igual se muestra, para pedirlos. */}
+      {foco && 'post' in foco && !grupos.some((g) => g.post === foco.post) && (
+        <section className="rounded-2xl border border-accent/60 p-3 sm:p-4 space-y-3 bg-zinc-900" style={bordeDePlataforma(posts.get(foco.post)?.platform)}>
+          <Publicacion p={posts.get(foco.post)} id={foco.post} nombre={nombre} huso={huso}
+            t={{ brand_id: posts.get(foco.post)?.brand_id ?? marcaDelPedido, platform: posts.get(foco.post)?.platform ?? null }} />
+          <p className="text-[11px] text-zinc-500">Esta publicación no tiene consejos abiertos.</p>
+        </section>
+      )}
+      {grupos.length === 0 && !(foco && 'post' in foco) && (
         <Aviso>No hay consejos abiertos{plataforma ? ' para esta plataforma' : ''}. Aparecen cuando SignalLab detecta algo que hacer
           (por ejemplo, una pregunta sin responder hace más de 4 h).</Aviso>
       )}
       {grupos.map((g) => (
         <section key={g.clave} className={cn('rounded-2xl border p-3 sm:p-4 space-y-3 bg-zinc-900',
-          g.clave === claveFoco ? 'border-accent/60 shadow-[0_0_0_1px_rgba(0,255,209,0.25)]' : 'border-zinc-800')}>
+          g.clave === claveFoco ? 'border-accent/60 shadow-[0_0_0_1px_rgba(0,255,209,0.25)]' : 'border-zinc-800')}
+          style={bordeDePlataforma((g.tarjetas[0] ?? g.recos[0])?.platform ?? (g.post ? posts.get(g.post)?.platform : null))}>
           {g.post ? <Publicacion p={posts.get(g.post)} id={g.post} nombre={nombre} huso={huso} t={g.tarjetas[0] ?? g.recos[0]} />
             : <Cuenta clave={g.cuenta!} nombre={nombre} />}
           <ul className="space-y-2">
@@ -120,20 +133,43 @@ function Publicacion({ p, id, nombre, huso, t }: {
   p?: Publicada; id: string; nombre: (b: string) => string; huso: (b: string) => string | null; t: { brand_id: string; platform: string | null };
 }) {
   const img = p ? (p.image_url ?? p.media_urls?.[0] ?? null) : null;
+  const { pedirConsejo, pedidoPorPublicacion } = usePulso();
+  const [pidiendo, setPidiendo] = useState(false);
+  const [aviso, setAviso] = useState<{ ok: boolean; texto: string } | null>(null);
+  const pedido = pedidoPorPublicacion.get(id);
+  const pedir = async () => {
+    setPidiendo(true); setAviso(null);
+    try { await pedirConsejo(t.brand_id, undefined, id); setAviso({ ok: true, texto: 'Consejo pedido: el asesor lo deja aquí en unos minutos.' }); }
+    catch (e) { setAviso({ ok: false, texto: e instanceof ErrorApi ? e.message : String(e) }); }
+    finally { setPidiendo(false); }
+  };
   return (
     <div className="flex gap-3">
-      <div className="w-16 h-16 shrink-0 rounded-lg overflow-hidden bg-zinc-800">
-        {img && <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer" className="w-full h-full object-cover" />}
-      </div>
+      {img ? <Miniatura src={img} className="w-16 h-16 rounded-lg object-cover bg-zinc-800" />
+        : <div className="w-16 h-16 shrink-0 rounded-lg bg-zinc-800" />}
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip className="text-zinc-200">{nombre(t.brand_id)}</Chip>
-          <Chip>{etiquetaPlataforma(t.platform ?? p?.platform ?? '')}</Chip>
+          <ChipPlataforma platform={t.platform ?? p?.platform ?? ''} />
           {p && <span className="text-[10px] text-zinc-500">{fechaHora(p.published_at, huso(t.brand_id))}</span>}
         </div>
         {p ? <p className="texto-editorial text-xs text-zinc-300 line-clamp-2">{p.copy_text ?? ''}</p>
           : <p className="text-[10px] text-zinc-600">publicación {id} (fuera de los últimos 30 días)</p>}
         {p && <PillsDePost id={p.id} platformPostId={p.platform_post_id} metricas={p.metricas} />}
+        {p && (
+          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            {pedido === 'pendiente' ? (
+              <span className="flex items-center gap-1.5 text-[11px] text-accent"><ChevronAsesor className="w-3.5 h-3.5" /> Consejo pedido: llega en unos minutos.</span>
+            ) : (
+              <button onClick={pedir} disabled={pidiendo}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-accent/40 text-accent text-[11px] font-bold hover:bg-accent/10 disabled:opacity-40">
+                <ChevronAsesor className="w-3.5 h-3.5" /> {pidiendo ? 'Pidiendo…' : 'Pedir consejo sobre esta publicación'}
+              </button>
+            )}
+            {pedido === 'sin_consejo' && <span className="text-[10px] text-zinc-500">La última vez el asesor no dejó consejo nuevo.</span>}
+            {aviso && <span className={cn('text-[10px]', aviso.ok ? 'text-zinc-400' : 'text-red-300')}>{aviso.texto}</span>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -144,7 +180,7 @@ function Cuenta({ clave, nombre }: { clave: string; nombre: (b: string) => strin
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Chip className="text-zinc-200">{nombre(brand)}</Chip>
-      <Chip>{etiquetaPlataforma(platform)}</Chip>
+      <ChipPlataforma platform={platform} />
       <span className="text-[11px] text-zinc-400">la cuenta</span>
     </div>
   );

@@ -18,6 +18,12 @@
  *                                `private_reply_tool` y `message_read_tool`: una vez por comentario y dentro
  *                                de `private_reply_window_minutes`. El GET dice, por comentario, si se puede
  *                                (`privada.puede`) y, si no, por qué (`privada.motivo`).
+ *   POST { tipo: 'cierre', post_comment_id, kind }
+ *                                cierra el comentario sin responderlo (Sam, 2026-10-26): `kind` ∈ hecho | descartado |
+ *                                contestado_fuera. Sale de la bandeja y el asesor no lo vuelve a proponer. El GET trae
+ *                                `cierre` por comentario y su estado pasa a `cerrado`.
+ *   POST { tipo: 'reabrir', post_comment_id }   deshace el cierre.
+ *                                Responder o cerrar caduca las recomendaciones abiertas de ese comentario.
  *
  * Autenticación: la misma sesión del tablero (`exigirOperador`). Un comentario de una marca fuera del
  * alcance es 403. Nada de este archivo nombra una plataforma: qué herramienta responde y cuál lee viene
@@ -25,8 +31,9 @@
  */
 import { ventana, enAlcance, marcasConsultadas, TODAS } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, mcpLeer, LecturaFallida, SB_URL, SB_KEY } from './_opsShared.js';
+import { leerCierres, cerrar, reabrir, caducarRecomendaciones } from './_cierres.js';
 import {
-  estados, ordenar, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
+  esTipoDeCierre, estados, ordenar, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
   type Comentario, type Respuesta, type Estado, type Clase,
 } from './_commentsCore.js';
 
@@ -95,15 +102,15 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
   const comentarios = await sbGet<FilaComentario>(
     `post_comments?select=${COLUMNAS_COMENTARIO}${filtro}&commented_at=gte.${encodeURIComponent(v.desde)}`
     + `&commented_at=lt.${encodeURIComponent(v.hasta)}&order=commented_at.desc&limit=${MAX_COMENTARIOS}`, 'content');
-  const respuestas = await respuestasDe(comentarios.map((c) => c.id));
-  const est = estados(comentarios, respuestas);
+  const [respuestas, cierres] = await Promise.all([respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id))]);
+  const est = estados(comentarios, respuestas, new Set(cierres.keys()));
   const plataformas = await sbGet<Plataforma>(`signal_platforms?select=${COLUMNAS_PLATAFORMA}&active=is.true`, 'intel');
   const ventanaDe = new Map(plataformas.map((p) => [p.platform, p.private_reply_window_minutes && p.private_reply_tool ? p.private_reply_window_minutes : null]));
   const ahora = Date.now();
   const porComentario = new Map<number, FilaRespuesta[]>();
   for (const r of respuestas) porComentario.set(r.post_comment_id, [...(porComentario.get(r.post_comment_id) ?? []), r]);
   const filas = ordenar(comentarios.map((c) => ({
-    ...c, estado: est.get(c.id) as Estado, respuestas: porComentario.get(c.id) ?? [],
+    ...c, estado: est.get(c.id) as Estado, respuestas: porComentario.get(c.id) ?? [], cierre: cierres.get(c.id) ?? null,
     privada: privadaDisponible(c, porComentario.get(c.id) ?? [], ventanaDe.get(c.platform) ?? null, ahora),
   })));
   const pendientes = filas.filter((f) => f.estado === 'sin_responder' || f.estado === 'fallida').length;
@@ -198,7 +205,22 @@ async function responder(cuerpo: any, sub: string, alcance: typeof TODAS | strin
   }
   const [f] = await sbEscribir<FilaRespuesta>('PATCH', filtro,
     motivo ? { error: motivo } : { status: 'verified', verified_at: new Date().toISOString() }, 'content');
+  // Respondido: el consejo abierto sobre este comentario ya no hace falta.
+  await caducarRecomendaciones(id, `sistema: comentario respondido por ${sub}`);
   return { status: 200, body: { respuesta: f } };
+}
+
+/** Cierra o reabre un comentario del alcance (Sam, 2026-10-26). */
+async function cierre(cuerpo: any, sub: string, alcance: typeof TODAS | string[]) {
+  const id = Number(cuerpo?.post_comment_id);
+  if (!Number.isInteger(id) || id <= 0) return { status: 400, body: { error: 'post_comment_id inválido' } };
+  const reabre = cuerpo?.tipo === 'reabrir';
+  if (!reabre && !esTipoDeCierre(cuerpo?.kind)) return { status: 400, body: { error: 'kind debe ser hecho, descartado o contestado_fuera' } };
+  const [c] = await sbGet<FilaComentario>(`post_comments?select=id,brand_id,from_brand&id=eq.${id}`, 'content');
+  if (!c || !enAlcance(alcance, c.brand_id)) return { status: 404, body: { error: 'comentario no encontrado' } };
+  if (c.from_brand) return { status: 422, body: { error: 'ese comentario es de la propia marca' } };
+  const r = reabre ? await reabrir(id) : await cerrar(id, cuerpo.kind, sub);
+  return r.ok ? { status: 200, body: { cierre: r.cierre } } : { status: r.status, body: { error: r.error } };
 }
 
 export default async function handler(req: any, res: any) {
@@ -213,7 +235,9 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json(await bandeja(req, c.marcas));
     }
     const cuerpo = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
-    const r = await responder(cuerpo, puerta.sesion.sub, puerta.alcance);
+    const r = cuerpo?.tipo === 'cierre' || cuerpo?.tipo === 'reabrir'
+      ? await cierre(cuerpo, puerta.sesion.sub, puerta.alcance)
+      : await responder(cuerpo, puerta.sesion.sub, puerta.alcance);
     return res.status(r.status).json(r.body);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

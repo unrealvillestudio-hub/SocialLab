@@ -39,7 +39,9 @@ export function plataformasDe(marcas: readonly Marca[], marca: string): string[]
   const elegidas = marca ? marcas.filter((m) => m.brand_id === marca) : marcas;
   return [...new Set(elegidas.flatMap((m) => [...(m.canales ?? []).map((c) => c.platform), ...m.plataformas_en_vivo]))].sort();
 }
-export interface Catalogo { sub: string; role: string; marcas: Marca[]; alcance_total: boolean }
+/** El color con que el tablero distingue cada plataforma (`intel.signal_platforms.display_color`, dato). */
+export interface PlataformaColor { platform: string; color: string | null }
+export interface Catalogo { sub: string; role: string; marcas: Marca[]; alcance_total: boolean; plataformas?: PlataformaColor[] }
 
 export interface Metrica { metric: string; value: number; age_minutes: number; fetched_at: string }
 export interface Conteo { brand_id: string; platform: string; formato: string; total: number }
@@ -99,7 +101,7 @@ export interface RespEstadisticas {
 export interface ResumenCuenta {
   brand_id: string; platform: string;
   seguidores: { value: number; fecha: string } | null;
-  series: { metric: string; nota: string | null; puntos: { fecha: string; value: number | null; motivo: string | null; provisional: boolean }[] }[];
+  series: { metric: string; nota: string | null; agregacion?: 'sum' | 'last'; puntos: { fecha: string; value: number | null; motivo: string | null; provisional: boolean }[] }[];
   totales: { metric: string; total: number; dias: number; nota: string | null }[];
   campos: { metric: string; value: number; fecha: string }[];
   desgloses: { metric: string; breakdown: string; valores: { valor: string; total: number }[] }[];
@@ -109,7 +111,10 @@ export interface ResumenCuenta {
 
 // ── Comentarios (`/api/comments`, SocialLab #14) ──────────────────────────────
 
-export type EstadoComentario = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'de_la_marca';
+export type EstadoComentario = 'sin_responder' | 'fallida' | 'en_curso' | 'respondido' | 'cerrado' | 'de_la_marca';
+/** Cómo se cierra un comentario sin responderlo desde el tablero (Sam, 2026-10-26). */
+export type TipoCierre = 'hecho' | 'descartado' | 'contestado_fuera';
+export interface CierreComentario { kind: TipoCierre; closed_by: string; closed_at: string }
 export interface RespuestaComentario {
   id: string; post_comment_id: number; status: 'requested' | 'sent' | 'verified' | 'failed';
   /** `publica` (en el hilo) o `privada` (mensaje a quien comentó). */
@@ -124,6 +129,8 @@ export interface Comentario {
   estado: EstadoComentario; respuestas: RespuestaComentario[];
   /** Si se puede responder en privado a quien comentó y, si no, por qué (SocialLab #20). */
   privada?: { puede: boolean; motivo: string | null; hasta: string | null };
+  /** El cierre del comentario, si el operador lo cerró sin responderlo. */
+  cierre?: CierreComentario | null;
 }
 export interface RespComentarios {
   ventana: { desde: string; hasta: string }; total: number; pendientes: number; truncado: boolean; comentarios: Comentario[];
@@ -140,6 +147,15 @@ export async function responderComentario(token: string, postCommentId: number, 
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ post_comment_id: postCommentId, message, ...(privada ? { privada: true } : {}) }),
+  }));
+}
+
+/** Cierra un comentario sin responderlo (`kind`) o lo reabre (`null`). */
+export async function cerrarComentario(token: string, postCommentId: number, kind: TipoCierre | null): Promise<unknown> {
+  return leer(await fetch('/api/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(kind ? { tipo: 'cierre', post_comment_id: postCommentId, kind } : { tipo: 'reabrir', post_comment_id: postCommentId }),
   }));
 }
 
@@ -166,7 +182,12 @@ export interface Recomendacion {
 }
 /** Cómo va el último pedido de consejo sobre un comentario (sin nada del despertar: ni costo ni modelo). */
 export interface PedidoConsejo { post_comment_id: number; estado: 'pendiente' | 'sin_consejo' | 'con_consejo' }
-export interface RespTarjetas { truncado: boolean; nuevas: number; tarjetas: Tarjeta[]; recomendaciones?: Recomendacion[]; pedidos?: PedidoConsejo[] }
+/** Lo mismo, sobre una publicación (Sam, 2026-10-26). */
+export interface PedidoConsejoPublicacion { scheduled_post_id: string; estado: 'pendiente' | 'sin_consejo' | 'con_consejo' }
+export interface RespTarjetas {
+  truncado: boolean; nuevas: number; tarjetas: Tarjeta[]; recomendaciones?: Recomendacion[]; pedidos?: PedidoConsejo[];
+  pedidos_publicacion?: PedidoConsejoPublicacion[];
+}
 
 export async function tarjetas(token: string, params: Record<string, string | undefined> = {}): Promise<RespTarjetas> {
   const qs = new URLSearchParams();
@@ -192,13 +213,14 @@ export async function cambiarRecomendacion(token: string, id: string, status: 's
 }
 
 /**
- * Pone en cola un despertar del asesor para una marca; con `postCommentId`, consejo sobre ese comentario
- * (Sam, 2026-10-26). 409 = ya hay uno en cola.
+ * Pone en cola un despertar del asesor para una marca; con `postCommentId`, consejo sobre ese comentario; con
+ * `scheduledPostId`, sobre esa publicación (Sam, 2026-10-26). 409 = ya hay uno en cola.
  */
-export async function pedirConsejo(token: string, marca: string, postCommentId?: number): Promise<unknown> {
+export async function pedirConsejo(token: string, marca: string, postCommentId?: number, scheduledPostId?: string): Promise<unknown> {
   return leer(await fetch('/api/tarjetas', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ tipo: 'despertar', marca, ...(postCommentId != null ? { post_comment_id: postCommentId } : {}) }),
+    body: JSON.stringify({ tipo: 'despertar', marca, ...(postCommentId != null ? { post_comment_id: postCommentId } : {}),
+      ...(scheduledPostId ? { scheduled_post_id: scheduledPostId } : {}) }),
   }));
 }

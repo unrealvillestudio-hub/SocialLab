@@ -356,6 +356,15 @@ test('cuenta: seguidores, serie con días provisionales, totales, desgloses, blo
   assert.deepEqual(r.sinDatos, [{ metric: 'saves', breakdown: '' }], 'sin valor y sin umbral es «sin datos», no cero');
 });
 
+test('cuenta: una serie acumulada (aggregation = last) se marca como tal; sin el campo, suma (Sam, 2026-10-26)', () => {
+  const f = (metric_date, metric, value) => ({ brand_id: 'B', platform: 'P1', metric_date, metric, breakdown: '', breakdown_value: '', value, unavailable_reason: null });
+  const [r] = resumenCuenta([f('2026-10-24', 'seguidores_totales', 2), f('2026-10-25', 'seguidores_totales', 2), f('2026-10-25', 'alcance', 5)], [
+    { platform: 'P1', metric: 'seguidores_totales', breakdown: '', read_as: 'time_series', min_followers: null, notes: null, aggregation: 'last' },
+    { platform: 'P1', metric: 'alcance', breakdown: '', read_as: 'time_series', min_followers: null, notes: null },
+  ], 7, '2026-10-25');
+  assert.deepEqual(r.series.map((x) => [x.metric, x.agregacion]), [['alcance', 'sum'], ['seguidores_totales', 'last']]);
+});
+
 test('logotipo: el nombre conserva su caja — las minúsculas van en tramos propios (Sam, 2026-10-26)', () => {
   assert.deepEqual(tramosDeCaja('SocialLab'), [
     { texto: 'S', minuscula: false }, { texto: 'ocial', minuscula: true },

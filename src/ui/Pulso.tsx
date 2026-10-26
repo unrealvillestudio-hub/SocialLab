@@ -53,11 +53,13 @@ interface Pulso {
   recomendaciones: Recomendacion[]; recosPorPost: Map<string, Recomendacion[]>; recosPorCuenta: Map<string, Recomendacion[]>;
   recosAbiertas: Set<string>;
   marcarRecomendacion: (id: string, status: 'seguida' | 'descartada', enviado?: string) => Promise<void>;
-  /** Consejo a pedido: de la marca entera o, con `postCommentId`, sobre ese comentario. */
-  pedirConsejo: (marca: string, postCommentId?: number) => Promise<void>;
+  /** Consejo a pedido: de la marca entera, sobre un comentario (`postCommentId`) o sobre una publicación (`scheduledPostId`). */
+  pedirConsejo: (marca: string, postCommentId?: number, scheduledPostId?: string) => Promise<void>;
   /** Por comentario: la recomendación nueva del asesor y cómo va el último pedido de consejo (Sam, 2026-10-26). */
   recoPorComentario: Map<number, Recomendacion>;
   pedidoPorComentario: Map<number, PedidoConsejo['estado']>;
+  /** Cómo va el último pedido de consejo sobre cada publicación (Sam, 2026-10-26). */
+  pedidoPorPublicacion: Map<string, PedidoConsejo['estado']>;
   /** Las marcas de la pill de un foco: tarjetas + recomendaciones. */
   marcasDePill: (foco: Exclude<FocoAsesor, null>) => { severity: string; status: string }[];
 }
@@ -100,6 +102,7 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
   const [tickTarjetas, setTickTarjetas] = useState(0);
   const [listaRecos, setListaRecos] = useState<Recomendacion[]>([]);
   const [pedidos, setPedidos] = useState<Map<number, PedidoConsejo['estado']>>(new Map());
+  const [pedidosPost, setPedidosPost] = useState<Map<string, PedidoConsejo['estado']>>(new Map());
   // Una recomendación no tiene «vista» en la base: lo que este operador ya abrió se recuerda en su navegador.
   const [recosAbiertas, setRecosAbiertas] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('sociallab.recos_abiertas') ?? '[]')); } catch { return new Set(); }
@@ -196,6 +199,7 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
         if (!activo) return;
         setListaTarjetas(r.tarjetas ?? []); setListaRecos(r.recomendaciones ?? []);
         setPedidos(new Map((r.pedidos ?? []).map((p) => [p.post_comment_id, p.estado])));
+        setPedidosPost(new Map((r.pedidos_publicacion ?? []).map((p) => [p.scheduled_post_id, p.estado])));
       })
       .catch((e) => console.error('[pulso] tarjetas del asesor:', e instanceof Error ? e.message : e));
     return () => { activo = false; };
@@ -230,15 +234,19 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     else actualizarLocal(r.tarjeta);
   }, [token]);
 
-  // Sólo se muestran las «nueva»: seguida o descartada, sale de la lista.
+  // Sólo se muestran las «nueva»: seguida o descartada, sale de la lista. «Hecho» sobre el consejo de un comentario
+  // cierra el comentario en el servidor: sus otros consejos caducan y la bandeja se relee (Sam, 2026-10-26).
   const marcarRecomendacion = useCallback(async (id: string, status: 'seguida' | 'descartada', enviado?: string) => {
     await cambiarRecomendacion(token, id, status, enviado);
-    setListaRecos((xs) => xs.filter((x) => x.id !== id));
-  }, [token]);
-  const pedirConsejo = useCallback(async (m: string, postCommentId?: number) => {
-    await pedirConsejoApi(token, m, postCommentId);
+    const comentario = listaRecos.find((x) => x.id === id)?.post_comment_id ?? null;
+    setListaRecos((xs) => xs.filter((x) => x.id !== id && !(status === 'seguida' && comentario != null && x.post_comment_id === comentario)));
+    if (status === 'seguida' && comentario != null) setTick((n) => n + 1);
+  }, [token, listaRecos]);
+  const pedirConsejo = useCallback(async (m: string, postCommentId?: number, scheduledPostId?: string) => {
+    await pedirConsejoApi(token, m, postCommentId, scheduledPostId);
     // En el acto, «consejo pedido»; la próxima lectura (cada minuto) trae el estado real.
     if (postCommentId != null) setPedidos((p) => new Map(p).set(postCommentId, 'pendiente'));
+    else if (scheduledPostId) setPedidosPost((p) => new Map(p).set(scheduledPostId, 'pendiente'));
   }, [token]);
   const recoPorComentario = useMemo(() => {
     const m = new Map<number, Recomendacion>();
@@ -269,12 +277,12 @@ export function ProveedorPulso({ token, marca, onAtender, onAsesor, children }: 
     tarjetas: listaTarjetas,
     tarjetasNuevas: listaTarjetas.filter((t) => t.status === 'nueva').length + listaRecos.filter((r) => !recosAbiertas.has(r.id)).length,
     recomendaciones: listaRecos, recosPorPost: gruposRecos.porPost, recosPorCuenta: gruposRecos.porCuenta, recosAbiertas,
-    marcarRecomendacion, pedirConsejo, marcasDePill, recoPorComentario, pedidoPorComentario: pedidos,
+    marcarRecomendacion, pedirConsejo, marcasDePill, recoPorComentario, pedidoPorComentario: pedidos, pedidoPorPublicacion: pedidosPost,
     tarjetasPorPost: grupos.porPost, tarjetasPorCuenta: grupos.porCuenta, comentariosPorId,
     abrirAsesor, marcarTarjeta, recargarTarjetas: () => setTickTarjetas((n) => n + 1),
   }), [vivo, errorVivo, cargandoVivo, leidoVivoEn, pendientesPorPost, pendientes, nuevos, onAtender,
     listaTarjetas, grupos, comentariosPorId, abrirAsesor, marcarTarjeta,
-    listaRecos, gruposRecos, recosAbiertas, marcarRecomendacion, pedirConsejo, marcasDePill, recoPorComentario, pedidos]);
+    listaRecos, gruposRecos, recosAbiertas, marcarRecomendacion, pedirConsejo, marcasDePill, recoPorComentario, pedidos, pedidosPost]);
 
   return <Ctx.Provider value={valor}>{children}</Ctx.Provider>;
 }
