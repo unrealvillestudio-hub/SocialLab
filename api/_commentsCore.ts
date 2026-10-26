@@ -171,3 +171,94 @@ export function privadaDisponible(
 
 /** La respuesta privada va a la persona de ESE comentario, no al primer nivel del hilo. */
 export const objetivoDePrivada = (c: Pick<Comentario, 'platform_comment_id'>): string => c.platform_comment_id;
+
+// ── TIEMPO DE RESPUESTA (Sam, 2026-10-26) ─────────────────────────────────────────────────────────
+//
+// Cuánto tarda la marca en responder, contra una meta que es dato: `intel.brand_response_targets` (marca y plataforma
+// → marca) y, si no hay, `signal_collector_config.response_target_minutes`. La primera respuesta es la primera que salió
+// desde SocialLab (enviada o verificada) o la primera de la marca en el mismo hilo, desde donde sea. Lo cerrado sin
+// responder y lo de allegados no cuenta: no es trabajo de respuesta.
+
+export interface MetaDeRespuesta { brand_id: string; platform: string | null; target_minutes: number }
+
+/** La meta de una marca y plataforma: la suya, la de la marca o la de por defecto. Sin ninguna, null. */
+export function metaDe(metas: readonly MetaDeRespuesta[], porDefecto: number | null, brandId: string, platform: string): number | null {
+  return metas.find((m) => m.brand_id === brandId && m.platform === platform)?.target_minutes
+    ?? metas.find((m) => m.brand_id === brandId && m.platform === null)?.target_minutes
+    ?? porDefecto;
+}
+
+/**
+ * Minutos hasta la primera respuesta de cada comentario ajeno, o null si nadie respondió. `respuestas` son las de
+ * SocialLab (con `sent_at`); `comentarios` incluye los de la marca, para ver si contestó en el hilo.
+ */
+export function minutosHastaRespuesta(
+  comentarios: readonly Comentario[], respuestas: readonly (Respuesta & { sent_at?: string | null })[],
+): Map<number, number | null> {
+  const marcaPorHilo = new Map<string, number[]>();
+  for (const m of comentarios) {
+    if (!m.from_brand) continue;
+    const k = `${m.platform}|${hiloDe(m)}`;
+    const t = Date.parse(m.commented_at);
+    if (!Number.isNaN(t)) marcaPorHilo.set(k, [...(marcaPorHilo.get(k) ?? []), t]);
+  }
+  const salidaPorComentario = new Map<number, number[]>();
+  for (const r of respuestas) {
+    if (r.status !== 'sent' && r.status !== 'verified') continue;
+    const t = Date.parse(r.sent_at ?? r.requested_at);
+    if (!Number.isNaN(t)) salidaPorComentario.set(r.post_comment_id, [...(salidaPorComentario.get(r.post_comment_id) ?? []), t]);
+  }
+  const out = new Map<number, number | null>();
+  for (const c of comentarios) {
+    if (c.from_brand) continue;
+    const t0 = Date.parse(c.commented_at);
+    const candidatas = [...(salidaPorComentario.get(c.id) ?? []), ...(marcaPorHilo.get(`${c.platform}|${hiloDe(c)}`) ?? [])].filter((t) => t > t0);
+    out.set(c.id, candidatas.length ? Math.round((Math.min(...candidatas) - t0) / 60_000) : null);
+  }
+  return out;
+}
+
+export interface TiempoDeRespuesta {
+  brand_id: string; platform: string; meta_min: number | null;
+  /** Comentarios respondidos en la ventana y la mediana de lo que se tardó. */
+  respondidos: number; mediana_min: number | null;
+  /** Porcentaje de respondidos dentro de la meta (null sin meta o sin respondidos). */
+  dentro_pct: number | null;
+  /** Comentarios que siguen esperando y ya pasaron la meta. */
+  fuera_de_meta: number;
+}
+
+const mediana = (xs: number[]): number | null => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const i = Math.floor(s.length / 2);
+  return s.length % 2 ? s[i] : Math.round((s[i - 1] + s[i]) / 2);
+};
+
+/** El resumen por marca y plataforma. Sólo cuenta lo que es trabajo de respuesta: ni la marca, ni allegados, ni cerrado. */
+export function tiemposDeRespuesta(
+  filas: readonly { brand_id: string; platform: string; commented_at: string; estado: Estado; from_brand: boolean; id: number }[],
+  minutos: ReadonlyMap<number, number | null>, meta: (brandId: string, platform: string) => number | null, ahora = Date.now(),
+): TiempoDeRespuesta[] {
+  const grupos = new Map<string, { brand_id: string; platform: string; tiempos: number[]; fuera: number }>();
+  for (const f of filas) {
+    if (f.from_brand || f.estado === 'allegado' || f.estado === 'cerrado' || f.estado === 'de_la_marca') continue;
+    const k = `${f.brand_id}|${f.platform}`;
+    const g = grupos.get(k) ?? { brand_id: f.brand_id, platform: f.platform, tiempos: [], fuera: 0 };
+    const m = minutos.get(f.id) ?? null;
+    const objetivo = meta(f.brand_id, f.platform);
+    if (m !== null) g.tiempos.push(m);
+    else if ((f.estado === 'sin_responder' || f.estado === 'fallida') && objetivo !== null
+      && (ahora - Date.parse(f.commented_at)) / 60_000 > objetivo) g.fuera++;
+    grupos.set(k, g);
+  }
+  return [...grupos.values()].map((g) => {
+    const objetivo = meta(g.brand_id, g.platform);
+    return {
+      brand_id: g.brand_id, platform: g.platform, meta_min: objetivo, respondidos: g.tiempos.length,
+      mediana_min: mediana(g.tiempos),
+      dentro_pct: objetivo !== null && g.tiempos.length ? Math.round(100 * g.tiempos.filter((t) => t <= objetivo).length / g.tiempos.length) : null,
+      fuera_de_meta: g.fuera,
+    };
+  }).sort((a, b) => a.brand_id.localeCompare(b.brand_id) || a.platform.localeCompare(b.platform));
+}

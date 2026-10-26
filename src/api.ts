@@ -135,9 +135,17 @@ export interface Comentario {
   cierre?: CierreComentario | null;
   /** Si quien lo escribió está marcado como allegado o del equipo. */
   allegado?: Relacion | null;
+  /** La meta de respuesta de su marca y plataforma, en minutos, y lo que se tardó en responderlo (null = sin respuesta). */
+  meta_min?: number | null; respondido_en_min?: number | null;
+}
+/** Tiempo de respuesta de una marca en una plataforma, en la ventana (Sam, 2026-10-26). */
+export interface TiempoDeRespuesta {
+  brand_id: string; platform: string; meta_min: number | null; respondidos: number; mediana_min: number | null;
+  dentro_pct: number | null; fuera_de_meta: number;
 }
 export interface RespComentarios {
   ventana: { desde: string; hasta: string }; total: number; pendientes: number; truncado: boolean; comentarios: Comentario[];
+  tiempos?: TiempoDeRespuesta[];
 }
 
 export async function comentarios(token: string, params: Record<string, string | undefined> = {}): Promise<RespComentarios> {

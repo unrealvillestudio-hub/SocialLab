@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   estados, ordenar, objetivoDeRespuesta, mensajeValido, hayEnVuelo, verificada, MINUTOS_EN_VUELO,
-  privadaDisponible, objetivoDePrivada, ESTADOS_PENDIENTES, esTipoDeCierre, esRelacion, claveDeAutor,
+  privadaDisponible, objetivoDePrivada, ESTADOS_PENDIENTES, esTipoDeCierre, esRelacion, claveDeAutor, metaDe, minutosHastaRespuesta, tiemposDeRespuesta,
 } from '../api/_commentsCore.ts';
 
 let fallos = 0;
@@ -180,6 +180,40 @@ test('9 · handler: marcar allegado comprueba alcance y autor antes de escribir'
   const escribe = f.search(/marcarAllegado\(cuenta|quitarAllegado\(cuenta/);
   assert.ok(f.indexOf('enAlcance(alcance, c.brand_id)') > 0 && f.indexOf('enAlcance(alcance, c.brand_id)') < escribe);
   assert.ok(f.indexOf('if (!autor)') > 0 && f.indexOf('if (!autor)') < escribe);
+});
+
+test('10 · meta de respuesta (Sam, 2026-10-26): marca y plataforma → marca → por defecto', () => {
+  const metas = [{ brand_id: 'B', platform: 'P', target_minutes: 60 }, { brand_id: 'B', platform: null, target_minutes: 120 }];
+  assert.equal(metaDe(metas, 240, 'B', 'P'), 60);
+  assert.equal(metaDe(metas, 240, 'B', 'Q'), 120);
+  assert.equal(metaDe(metas, 240, 'C', 'P'), 240);
+  assert.equal(metaDe([], null, 'C', 'P'), null);
+});
+test('10 · minutos hasta la primera respuesta: desde SocialLab o de la marca en el hilo, la primera', () => {
+  const cs = [
+    c(1, { commented_at: '2026-10-25T10:00:00Z' }),
+    c(2, { commented_at: '2026-10-25T10:00:00Z', platform_comment_id: 'c2' }),
+    c(3, { commented_at: '2026-10-25T10:00:00Z', platform_comment_id: 'c3' }),
+    c(9, { from_brand: true, parent_comment_id: 'c2', commented_at: '2026-10-25T12:00:00Z' }),
+  ];
+  const rs = [
+    { id: 'a', post_comment_id: 1, status: 'verified', requested_at: '2026-10-25T10:20:00Z', sent_at: '2026-10-25T10:30:00Z' },
+    { id: 'b', post_comment_id: 2, status: 'verified', requested_at: '2026-10-25T13:00:00Z', sent_at: '2026-10-25T13:00:00Z' },
+    { id: 'c', post_comment_id: 3, status: 'failed', requested_at: '2026-10-25T10:05:00Z' },
+  ];
+  const m = minutosHastaRespuesta(cs, rs);
+  assert.equal(m.get(1), 30);
+  assert.equal(m.get(2), 120, 'la marca respondió en el hilo antes que SocialLab');
+  assert.equal(m.get(3), null, 'una respuesta fallida no es respuesta');
+  assert.ok(!m.has(9), 'los de la marca no se miden');
+});
+test('10 · resumen: mediana, porcentaje dentro de la meta y lo que ya la pasó; sin allegados ni cerrados', () => {
+  const ahora = Date.parse('2026-10-26T10:00:00Z');
+  const f = (id, estado, commented_at = '2026-10-25T10:00:00Z') => ({ id, brand_id: 'B', platform: 'P', commented_at, estado, from_brand: false });
+  const filas = [f(1, 'respondido'), f(2, 'respondido'), f(3, 'respondido'), f(4, 'sin_responder'), f(5, 'sin_responder', '2026-10-26T09:30:00Z'), f(6, 'allegado'), f(7, 'cerrado')];
+  const minutos = new Map([[1, 30], [2, 300], [3, 90], [4, null], [5, null], [6, 5], [7, null]]);
+  const [t] = tiemposDeRespuesta(filas, minutos, () => 240, ahora);
+  assert.deepEqual(t, { brand_id: 'B', platform: 'P', meta_min: 240, respondidos: 3, mediana_min: 90, dentro_pct: 67, fuera_de_meta: 1 });
 });
 
 if (fallos) { console.error(`\n${fallos} fallo(s)`); process.exit(1); }
