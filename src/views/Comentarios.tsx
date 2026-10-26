@@ -62,13 +62,17 @@ const ESTADO_RESPUESTA: Record<RespuestaComentario['status'], { etiqueta: string
   failed: { etiqueta: 'fallida', clase: 'text-red-300' },
 };
 
-/** Cuánto lleva esperando: en minutos, horas o días. */
-function espera(desde: string, ahora = Date.now()): string {
-  const min = Math.max(0, Math.round((ahora - Date.parse(desde)) / 60_000));
-  if (min < 60) return `${min} min`;
-  if (min < 48 * 60) return `${Math.round(min / 60)} h`;
-  return `${Math.round(min / 1440)} d`;
+/** Una duración en minutos, en minutos, horas o días. */
+function duracion(min: number): string {
+  const m = Math.max(0, Math.round(min));
+  if (m < 60) return `${m} min`;
+  if (m < 48 * 60) return `${Math.round(m / 60)} h`;
+  return `${Math.round(m / 1440)} d`;
 }
+/** Minutos que lleva esperando. */
+const minutosDesde = (desde: string, ahora = Date.now()) => (ahora - Date.parse(desde)) / 60_000;
+/** Cuánto lleva esperando: en minutos, horas o días. */
+const espera = (desde: string, ahora = Date.now()) => duracion(minutosDesde(desde, ahora));
 
 export default function Comentarios({ token, marca, plataforma = '', marcas, post = null, onQuitarFiltro }: {
   token: string; marca: string; plataforma?: string; marcas: Marca[];
@@ -193,6 +197,23 @@ export default function Comentarios({ token, marca, plataforma = '', marcas, pos
             <span className="text-zinc-600">·</span>
             <span>{total} comentarios en {dias} días</span>
           </div>
+          {/* TIEMPO DE RESPUESTA (Sam, 2026-10-26): mediana, cuánto se respondió dentro de la meta y qué ya la pasó. */}
+          {(data.tiempos ?? []).filter((t) => (!marca || t.brand_id === marca) && (!plataforma || t.platform === plataforma)).length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {(data.tiempos ?? []).filter((t) => (!marca || t.brand_id === marca) && (!plataforma || t.platform === plataforma)).map((t) => (
+                <div key={`${t.brand_id}|${t.platform}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-[11px] text-zinc-400"
+                  style={bordeDePlataforma(t.platform)}>
+                  {!marca && <span className="text-zinc-300">{nombre(t.brand_id)}</span>}
+                  <ChipPlataforma platform={t.platform} />
+                  <span>responde en <b className="text-zinc-100">{t.mediana_min === null ? '—' : duracion(t.mediana_min)}</b> (mediana, {t.respondidos})</span>
+                  {t.meta_min !== null && t.dentro_pct !== null && (
+                    <span><b className={cn(t.dentro_pct >= 80 ? 'text-emerald-300' : t.dentro_pct >= 50 ? 'text-amber-300' : 'text-red-300')}>{t.dentro_pct}%</b> dentro de {duracion(t.meta_min)}</span>
+                  )}
+                  {t.fuera_de_meta > 0 && <span className="text-red-300">{t.fuera_de_meta} ya pasaron la meta</span>}
+                </div>
+              ))}
+            </div>
+          )}
           {data.truncado && <Aviso tono="error">Hay más comentarios de los que se muestran: acota el rango.</Aviso>}
           {visibles.length === 0 && <Aviso>{verAtendidos ? 'No hay comentarios en esta ventana.' : 'Nada pendiente: todo lo de esta ventana está atendido.'}</Aviso>}
           <div className="space-y-4">
@@ -334,7 +355,14 @@ function TarjetaComentario({ c, token, huso, onCambio, onAtendido }: {
         {c.parent_comment_id && <Chip>respuesta en un hilo</Chip>}
         <span className="text-zinc-400 font-medium">{c.author_name ?? 'autor desconocido'}</span>
         <span className="text-zinc-600">· {fechaHora(c.commented_at, huso)}</span>
-        {espera_ && <span className="ml-auto text-amber-300">espera {espera(c.commented_at)}</span>}
+        {espera_ && (() => {
+          // Pasada la meta de respuesta (dato de la marca), la espera se ve en rojo.
+          const fuera = c.meta_min != null && minutosDesde(c.commented_at) > c.meta_min;
+          return <span className={cn('ml-auto', fuera ? 'text-red-300 font-bold' : 'text-amber-300')}
+            title={c.meta_min != null ? `Meta de respuesta: ${duracion(c.meta_min)}` : undefined}>
+            espera {espera(c.commented_at)}{fuera ? ' · pasó la meta' : ''}
+          </span>;
+        })()}
       </div>
       <p className="texto-editorial text-sm text-zinc-100 whitespace-pre-line break-words">{c.text ?? ''}</p>
       {c.like_count ? <div className="text-[10px] text-zinc-500">{c.like_count} me gusta</div> : null}

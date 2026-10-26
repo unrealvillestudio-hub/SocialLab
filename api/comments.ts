@@ -45,8 +45,8 @@ import { leerCierres, cerrar, reabrir, caducarRecomendaciones } from './_cierres
 import { leerAllegados, marcarAllegado, quitarAllegado } from './_allegados.js';
 import { idDePublicacion } from './_asesorCore.js';
 import {
-  esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
-  type Comentario, type Respuesta, type Estado, type Clase,
+  esTipoDeCierre, esRelacion, claveDeAutor, estados, ordenar, metaDe, minutosHastaRespuesta, tiemposDeRespuesta, objetivoDeRespuesta, objetivoDePrivada, mensajeValido, hayEnVuelo, verificada, privadaDisponible,
+  type Comentario, type Respuesta, type Estado, type Clase, type MetaDeRespuesta,
 } from './_commentsCore.js';
 
 const MAX_COMENTARIOS = 1000;
@@ -114,8 +114,10 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
   const comentarios = await sbGet<FilaComentario>(
     `post_comments?select=${COLUMNAS_COMENTARIO}${filtro}&commented_at=gte.${encodeURIComponent(v.desde)}`
     + `&commented_at=lt.${encodeURIComponent(v.hasta)}&order=commented_at.desc&limit=${MAX_COMENTARIOS}`, 'content');
-  const [respuestas, cierres, allegados] = await Promise.all([
-    respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id)), leerAllegados(marcas)]);
+  const [respuestas, cierres, allegados, metasR] = await Promise.all([
+    respuestasDe(comentarios.map((c) => c.id)), leerCierres(comentarios.map((c) => c.id)), leerAllegados(marcas), metasDeRespuesta(marcas)]);
+  const meta = (b: string, p: string) => metaDe(metasR.metas, metasR.porDefecto, b, p);
+  const minutos = minutosHastaRespuesta(comentarios, respuestas);
   const est = estados(comentarios, respuestas, new Set(cierres.keys()), new Set(allegados.keys()));
   const plataformas = await sbGet<Plataforma>(`signal_platforms?select=${COLUMNAS_PLATAFORMA}&active=is.true`, 'intel');
   const ventanaDe = new Map(plataformas.map((p) => [p.platform, p.private_reply_window_minutes && p.private_reply_tool ? p.private_reply_window_minutes : null]));
@@ -126,9 +128,27 @@ async function bandeja(req: any, marcas: typeof TODAS | string[]) {
     ...c, estado: est.get(c.id) as Estado, respuestas: porComentario.get(c.id) ?? [], cierre: cierres.get(c.id) ?? null,
     allegado: c.author_name ? allegados.get(claveDeAutor(c.brand_id, c.platform, c.author_name as string))?.relation ?? null : null,
     privada: privadaDisponible(c, porComentario.get(c.id) ?? [], ventanaDe.get(c.platform) ?? null, ahora),
+    meta_min: c.from_brand ? null : meta(c.brand_id, c.platform), respondido_en_min: minutos.get(c.id) ?? null,
   })));
   const pendientes = filas.filter((f) => f.estado === 'sin_responder' || f.estado === 'fallida').length;
-  return { ventana: v, total: filas.length, pendientes, truncado: comentarios.length >= MAX_COMENTARIOS, comentarios: filas };
+  return { ventana: v, total: filas.length, pendientes, truncado: comentarios.length >= MAX_COMENTARIOS, comentarios: filas,
+    tiempos: tiemposDeRespuesta(filas, minutos, meta, ahora) };
+}
+
+/**
+ * La meta de respuesta (unrlvl-iid-functions, migración 20261026230000): las de cada marca y la de por defecto. Sin la
+ * migración no hay metas: el tablero mide igual, sin comparar.
+ */
+async function metasDeRespuesta(marcas: typeof TODAS | string[]): Promise<{ metas: MetaDeRespuesta[]; porDefecto: number | null }> {
+  const filtro = marcas === TODAS ? '' : `&brand_id=${enLista(marcas)}`;
+  const [metas, conf] = await Promise.all([
+    sbGet<MetaDeRespuesta>(`brand_response_targets?select=brand_id,platform,target_minutes${filtro}`, 'intel').catch((e) => {
+      console.error(`[comentarios] metas de respuesta sin leer: ${e instanceof Error ? e.message : e}`); return [] as MetaDeRespuesta[];
+    }),
+    sbGet<{ value: unknown }>('signal_collector_config?key=eq.response_target_minutes&select=value', 'intel').catch(() => []),
+  ]);
+  const d = Number(conf[0]?.value);
+  return { metas, porDefecto: Number.isFinite(d) && d > 0 ? d : null };
 }
 
 // ── POST ──────────────────────────────────────────────────────────────────────
