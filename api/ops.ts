@@ -22,6 +22,7 @@ import {
   type Alcance, type Instantanea, type MetricaLeida, type PublicacionEnVivo, type Canal, type Via, type FilaCuenta, type MetricaCatalogo,
 } from './_opsCore.js';
 import { exigirOperador, sbGet, enLista, esTablaInexistente, mcpLeer, LecturaFallida } from './_opsShared.js';
+import { mejorHora, valorAEdad, type PublicacionMedida } from './_mejorHoraCore.js';
 
 const MAX_FILAS = 2000;
 const TROZO = 100;
@@ -353,8 +354,71 @@ async function cuentaDe(v: { desde: string; hasta: string }, marcas: typeof TODA
   }
 }
 
+// ── mejor hora (Sam, 2026-10-26; mejora 6) ─────────────────────────────────────
+
+/**
+ * La mejor hora de cada marca y plataforma, o por qué todavía no la hay (`_mejorHoraCore`). Cómo se compara es dato
+ * (unrlvl-iid-functions, migración 20261027000000): la métrica de cada plataforma (`best_time_metric`), la edad y su
+ * tolerancia, el ancho de la franja, el mínimo por franja y la ventana. Sin la migración, `disponible: false`.
+ */
+async function mejorHoraVista(_req: any, marcas: typeof TODAS | string[]) {
+  let plataformas: { platform: string; best_time_metric: string | null }[];
+  let conf: { key: string; value: unknown }[];
+  try {
+    [plataformas, conf] = await Promise.all([
+      sbGet<{ platform: string; best_time_metric: string | null }>('signal_platforms?select=platform,best_time_metric&active=is.true&best_time_metric=not.is.null', 'intel'),
+      sbGet<{ key: string; value: unknown }>('signal_collector_config?select=key,value&key=like.best_time_*', 'intel'),
+    ]);
+  } catch (err) {
+    if (err instanceof LecturaFallida && /best_time_metric|42703|PGRST/.test(err.message)) {
+      return { disponible: false, motivo: 'la comparación por franjas todavía no está configurada: falta aplicar su migración', cuentas: [] };
+    }
+    throw err;
+  }
+  const c = new Map(conf.map((k) => [k.key, Number(k.value)]));
+  const edad = c.get('best_time_age_minutes'), tol = c.get('best_time_age_tolerance_minutes'), banda = c.get('best_time_band_hours');
+  const minimo = c.get('best_time_min_posts_per_band'), dias = c.get('best_time_window_days');
+  if (![edad, tol, banda, minimo, dias].every((x) => Number.isFinite(x) && (x as number) > 0) || !plataformas.length) {
+    return { disponible: false, motivo: 'la comparación por franjas todavía no está configurada: falta aplicar su migración', cuentas: [] };
+  }
+  const metricaDe = new Map(plataformas.map((p) => [p.platform, p.best_time_metric as string]));
+  const desde = new Date(Date.now() - (dias as number) * 86_400_000).toISOString();
+  const posts = await sbGet<{ id: string; brand_id: string; platform: string; published_at: string }>(
+    `scheduled_posts?select=id,brand_id,platform,published_at&status=eq.published&platform_post_id=not.is.null`
+    + `&platform=${enLista([...metricaDe.keys()])}&published_at=gte.${encodeURIComponent(desde)}${filtroMarcas(marcas)}&order=published_at.desc&limit=${MAX_FILAS}`);
+  const lecturas = new Map<string, { age_minutes: number; value: number | null }[]>();
+  for (const ids of trozos(posts.map((p) => p.id), TROZO)) {
+    const filas = await sbGet<{ scheduled_post_id: string; metric: string; age_minutes: number; value: number | null }>(
+      `post_metric_snapshots?select=scheduled_post_id,metric,age_minutes,value&scheduled_post_id=${enLista(ids)}`
+      + `&metric=${enLista([...new Set(metricaDe.values())])}&age_minutes=gte.${edad}&age_minutes=lte.${(edad as number) + (tol as number)}`, 'content');
+    const plataformaDe = new Map(posts.map((p) => [p.id, p.platform]));
+    for (const f of filas) {
+      if (metricaDe.get(plataformaDe.get(f.scheduled_post_id) ?? '') !== f.metric) continue;
+      lecturas.set(f.scheduled_post_id, [...(lecturas.get(f.scheduled_post_id) ?? []), { age_minutes: f.age_minutes, value: f.value === null ? null : Number(f.value) }]);
+    }
+  }
+  const ids = [...new Set(posts.map((p) => p.brand_id))];
+  const husos = ids.length
+    ? new Map((await sbGet<{ id: string; publish_timezone: string | null }>(`brands?select=id,publish_timezone&id=${enLista(ids)}`)).map((b) => [b.id, b.publish_timezone]))
+    : new Map<string, string | null>();
+  const grupos = new Map<string, PublicacionMedida[]>();
+  for (const p of posts) {
+    const k = `${p.brand_id}|${p.platform}`;
+    grupos.set(k, [...(grupos.get(k) ?? []), {
+      brand_id: p.brand_id, platform: p.platform, published_at: p.published_at,
+      valor: valorAEdad(lecturas.get(p.id) ?? [], edad as number, tol as number),
+    }]);
+  }
+  return {
+    disponible: true, motivo: null,
+    config: { edad_minutos: edad, banda_horas: banda, minimo_por_franja: minimo, ventana_dias: dias },
+    cuentas: [...grupos.values()].map((ps) => mejorHora(ps, husos.get(ps[0].brand_id) ?? null, metricaDe.get(ps[0].platform)!,
+      { banda_horas: banda as number, minimo_por_franja: minimo as number })),
+  };
+}
+
 const VISTAS: Record<string, (req: any, marcas: typeof TODAS | string[]) => Promise<unknown>> = {
-  publicado, envivo, calendario, ahora: ahoraMismo, estadisticas: estadisticasVista,
+  publicado, envivo, calendario, ahora: ahoraMismo, estadisticas: estadisticasVista, mejorhora: mejorHoraVista,
 };
 
 export default async function handler(req: any, res: any) {

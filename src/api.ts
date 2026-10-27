@@ -312,3 +312,18 @@ export async function marcarAllegadoDM(token: string, threadId: number, relation
     body: JSON.stringify(relation ? { tipo: 'allegado', thread_id: threadId, relation } : { tipo: 'quitar_allegado', thread_id: threadId }),
   }));
 }
+
+// ── MEJOR HORA (Sam, 2026-10-26; mejora 6) ──────────────────────────────────────────────────────────
+
+export interface FranjaHora { inicio: number; fin: number; publicaciones: number; mediana: number | null; comparable: boolean }
+export interface MejorHoraCuenta {
+  brand_id: string; platform: string; huso: string | null; metrica: string; franjas: FranjaHora[];
+  estado: 'comparable' | 'datos_insuficientes';
+  mejor: { inicio: number; fin: number; mediana: number; ventaja_pct: number | null } | null;
+  motivo: string;
+}
+export interface RespMejorHora {
+  disponible: boolean; motivo: string | null;
+  config?: { edad_minutos: number; banda_horas: number; minimo_por_franja: number; ventana_dias: number };
+  cuentas: MejorHoraCuenta[];
+}

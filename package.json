@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node tests/contenedor_9007_test.mjs && node tests/circulo_kit_test.mjs && node tests/sin_voseo_test.mjs && node tests/tablero_test.mjs && node tests/sin_marcas_test.mjs && node tests/comentarios_test.mjs && node tests/mensajes_test.mjs && node tests/asesor_test.mjs && node tests/modelo_en_dato_test.mjs && node tests/adapt_test.mjs"
+    "test": "node tests/contenedor_9007_test.mjs && node tests/circulo_kit_test.mjs && node tests/sin_voseo_test.mjs && node tests/tablero_test.mjs && node tests/sin_marcas_test.mjs && node tests/comentarios_test.mjs && node tests/mensajes_test.mjs && node tests/mejor_hora_test.mjs && node tests/asesor_test.mjs && node tests/modelo_en_dato_test.mjs && node tests/adapt_test.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

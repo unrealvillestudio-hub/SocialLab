@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Lock, Users } from 'lucide-react';
-import { ops, type Estadistica, type Marca, type RespEstadisticas, type ResumenCuenta } from '../api';
+import { Clock, ExternalLink, Lock, Users } from 'lucide-react';
+import { ops, type Estadistica, type Marca, type RespEstadisticas, type ResumenCuenta, type MejorHoraCuenta, type RespMejorHora } from '../api';
 import { PillAsesorDeCuenta } from '../ui/Pulso';
 import { Aviso, Cargando, Chip, ChipPlataforma, bordeDePlataforma, cn, etiquetaFormato, fechaHora } from '../ui/components';
 
@@ -100,6 +100,17 @@ export default function Estadisticas({ token, marca, plataforma, marcas }: { tok
     return () => { vivo = false; };
   }, [token, marca, dias, tick]);
 
+  // Mejor hora (Sam, 2026-10-26): aparte, para que su lectura no frene las estadísticas.
+  const [horas, setHoras] = useState<RespMejorHora | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    ops<RespMejorHora>(token, 'mejorhora', { marca: marca || undefined })
+      .then((r) => { if (vivo) setHoras(r); })
+      .catch((e) => console.error('[estadisticas] mejor hora:', e instanceof Error ? e.message : e));
+    return () => { vivo = false; };
+  }, [token, marca, tick]);
+  const horaDe = (k: string) => horas?.cuentas.find((h) => `${h.brand_id}|${h.platform}` === k);
+
   const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
   const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
   // Una tarjeta por marca y plataforma con publicaciones medidas O con métricas de cuenta.
@@ -137,7 +148,7 @@ export default function Estadisticas({ token, marca, plataforma, marcas }: { tok
           <div className="grid gap-4 xl:grid-cols-2">
             {claves.map(({ k, e, c }) => (
               <Tarjeta key={k} e={e} c={c} nombre={nombre((e ?? c)!.brand_id)} huso={huso((e ?? c)!.brand_id)}
-                cuenta={data.cuenta} />
+                cuenta={data.cuenta} hora={horaDe(k)} config={horas?.config} />
             ))}
           </div>
         </>
@@ -146,8 +157,9 @@ export default function Estadisticas({ token, marca, plataforma, marcas }: { tok
   );
 }
 
-function Tarjeta({ e, c, nombre, huso, cuenta }: {
+function Tarjeta({ e, c, nombre, huso, cuenta, hora, config }: {
   e?: Estadistica; c?: ResumenCuenta; nombre: string; huso: string | null; cuenta: RespEstadisticas['cuenta'];
+  hora?: MejorHoraCuenta; config?: RespMejorHora['config'];
 }) {
   const platform = (e ?? c)!.platform;
   return (
@@ -173,7 +185,50 @@ function Tarjeta({ e, c, nombre, huso, cuenta }: {
         )}
 
       {e && <Publicaciones e={e} huso={huso} />}
+      {hora && <MejorHora h={hora} config={config} />}
     </section>
+  );
+}
+
+// ── Mejor hora ────────────────────────────────────────────────────────────────
+
+/**
+ * Las franjas del día (en el huso de la marca) con sus publicaciones y la mediana de su métrica a la misma edad. Sólo
+ * las franjas con el mínimo de publicaciones se comparan; si no hay dos, lo dice y no nombra una hora (Sam, 2026-10-26).
+ */
+function MejorHora({ h, config }: { h: MejorHoraCuenta; config?: RespMejorHora['config'] }) {
+  const max = Math.max(1, ...h.franjas.map((f) => f.mediana ?? 0));
+  const edad = config ? (config.edad_minutos % 1440 === 0 ? `${config.edad_minutos / 1440} d` : `${Math.round(config.edad_minutos / 60)} h`) : null;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Clock className="w-4 h-4 text-accent" />
+        <span className="text-xs font-semibold text-zinc-200">Mejor hora para publicar</span>
+        {h.estado === 'comparable' && h.mejor
+          ? <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[11px] font-bold">{h.mejor.inicio}–{h.mejor.fin === 0 ? 24 : h.mejor.fin} h</span>
+          : <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[11px]">datos insuficientes</span>}
+      </div>
+      <p className="text-[11px] text-zinc-400">{h.motivo.charAt(0).toUpperCase() + h.motivo.slice(1)}.</p>
+      {h.franjas.length > 0 && (
+        <ul className="space-y-1" aria-label="Franjas horarias">
+          {h.franjas.map((f) => (
+            <li key={f.inicio} className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-2 text-[11px]">
+              <span className="text-zinc-400 tabular-nums">{f.inicio}–{f.fin === 0 ? 24 : f.fin} h</span>
+              <span className="h-2 rounded bg-zinc-800 overflow-hidden">
+                <span className={cn('block h-full rounded', f.comparable ? 'bg-accent' : 'bg-zinc-600')} style={{ width: `${Math.round(100 * (f.mediana ?? 0) / max)}%` }} />
+              </span>
+              <span className={cn('tabular-nums', f.comparable ? 'text-zinc-200' : 'text-zinc-500')}>
+                {f.mediana === null ? '—' : numero(Math.round(f.mediana))} · {f.publicaciones} {f.publicaciones === 1 ? 'publicación' : 'publicaciones'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[10px] text-zinc-500">
+        Mediana de {h.metrica}{edad ? ` a ${edad} de publicada` : ''}, en la hora de la marca{h.huso ? ` (${h.huso})` : ''}
+        {config ? `; franjas de ${config.banda_horas} h, comparables desde ${config.minimo_por_franja} publicaciones, últimos ${config.ventana_dias} días` : ''}.
+      </p>
+    </div>
   );
 }
 
