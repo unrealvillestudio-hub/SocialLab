@@ -72,6 +72,21 @@ async function pedidos(marcas: typeof TODAS | string[]) {
   }
 }
 
+/**
+ * Las recomendaciones visibles, con el objetivo semanal al que apuntan (`growth_goal_id`, 2026-10-27). Antes de la
+ * migración de objetivos la columna no existe: se leen sin ella y el tablero sigue.
+ */
+async function leerRecomendaciones(marcas: typeof TODAS | string[]): Promise<RecoFila[]> {
+  const ruta = (cols: string) => `social_advisor_recommendations?select=${cols}&status=${enLista(RECOMENDACIONES_VISIBLES as string[])}`
+    + `${filtroMarcas(marcas)}&order=created_at.desc&limit=${MAX_TARJETAS}`;
+  try { return await sbGet<RecoFila>(ruta(`${COLUMNAS_RECO},growth_goal_id`), 'intel'); }
+  catch (e) {
+    if (!(e instanceof LecturaFallida) || e.codigo !== '42703') throw e;
+    console.error(`[asesor] recomendaciones sin objetivo: ${e.message}`);
+    return sbGet<RecoFila>(ruta(COLUMNAS_RECO), 'intel');
+  }
+}
+
 async function acciones(): Promise<Map<string, AccionTipo>> {
   const filas = await sbGet<AccionTipo>('engagement_action_types?select=action_key,label,objective,via', 'intel');
   return new Map(filas.map((a) => [a.action_key, a]));
@@ -87,8 +102,7 @@ async function listar(req: any, marcas: typeof TODAS | string[], alcanceTotal: b
   const [filas, tipos, recos, pedidosDeConsejo] = await Promise.all([
     sbGet<TarjetaFila>(`signal_cards?select=${COLUMNAS}&${filtro}${filtroMarcas(marcas)}&order=created_at.desc&limit=${MAX_TARJETAS + 1}`, 'intel'),
     acciones(),
-    sbGet<RecoFila>(`social_advisor_recommendations?select=${COLUMNAS_RECO}&status=${enLista(RECOMENDACIONES_VISIBLES as string[])}`
-      + `${filtroMarcas(marcas)}&order=created_at.desc&limit=${MAX_TARJETAS}`, 'intel'),
+    leerRecomendaciones(marcas),
     pedidos(marcas),
   ]);
   const truncado = filas.length > MAX_TARJETAS;
