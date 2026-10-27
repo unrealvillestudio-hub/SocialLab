@@ -7,7 +7,7 @@
  * Ningún fallo de lectura se presenta como «no hay nada»: `LecturaFallida` sube hasta el handler,
  * que responde 503 con el detalle (mismo criterio que N11 en `api/publish.ts`).
  */
-import { verificarSesion, alcanceDe, type Sesion, type Alcance, type Concesion } from './_opsCore.js';
+import { verificarSesion, alcanceDe, alcanceDeAgente, capacidadDe, ROL_AGENTE, type Sesion, type Alcance, type Concesion } from './_opsCore.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -81,6 +81,23 @@ async function concesionesDe(sub: string): Promise<Concesion[] | null> {
   }
 }
 
+/** Las marcas en que una agente tiene una capacidad (`intel.agente_alcance`); null si no se pudo leer. */
+async function alcanceDeLaAgente(agente: string, capacidad: 'leer' | 'actuar'): Promise<string[] | null> {
+  try {
+    const r = await fetch(`${SB_URL()}/rest/v1/rpc/agente_alcance`, {
+      method: 'POST',
+      headers: { apikey: SB_KEY(), Authorization: `Bearer ${SB_KEY()}`, 'Content-Type': 'application/json', 'Content-Profile': 'intel' },
+      body: JSON.stringify({ p_agent_id: agente, p_capability: capacidad }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`);
+    const data = await r.json();
+    return Array.isArray(data) ? data.map(String) : null;
+  } catch (err) {
+    console.error('[tablero] intel.agente_alcance falló:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 /** La puerta del tablero. Responde y devuelve null si algo falla (503 configuración, 401 sesión, 403 alcance). */
 export async function exigirOperador(req: any, res: any): Promise<{ sesion: Sesion; alcance: Alcance } | null> {
   if (!SB_URL() || !SB_KEY()) {
@@ -93,6 +110,17 @@ export async function exigirOperador(req: any, res: any): Promise<{ sesion: Sesi
   }
   const sesion = verificarSesion(tokenDe(req), SESSION_SECRET());
   if (!sesion) { res.status(401).json({ error: 'sesión inválida o expirada, vuelve a entrar' }); return null; }
+  // Una agente del ecosistema (2026-10-27): su alcance sale de `intel.agente_alcance`, leer para mirar y actuar para
+  // escribir. Un fallo de lectura la deja fuera (fail-closed), nunca con todas las marcas.
+  if (sesion.role === ROL_AGENTE) {
+    const capacidad = capacidadDe(req.method);
+    const alcanceAgente = alcanceDeAgente(await alcanceDeLaAgente(sesion.sub, capacidad));
+    if (!alcanceAgente) {
+      res.status(403).json({ error: `forbidden: '${sesion.sub}' no puede ${capacidad} en ninguna marca` });
+      return null;
+    }
+    return { sesion, alcance: alcanceAgente };
+  }
   const alcance = alcanceDe(sesion, sesion.role === 'admin' ? [] : await concesionesDe(sesion.sub));
   if (!alcance) {
     res.status(403).json({ error: `forbidden: '${sesion.sub}' no tiene marcas asignadas en el tablero` });
