@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Pencil, Sparkles, Target, X } from 'lucide-react';
-import { decidirObjetivo, pedirObjetivos, type Objetivo, type RespObjetivos, type ResultadoObjetivo } from '../api';
+import { decidirObjetivo, objetivos as leerObjetivos, pedirObjetivos, type Marca, type Objetivo, type RespObjetivos, type ResultadoObjetivo } from '../api';
 import { Chip, cn, etiquetaPlataforma } from './components';
 
 /**
- * ESTRATEGIA DE LA SEMANA · el banner de Hoy (Sam, 2026-10-26/27). El asesor propone objetivos de crecimiento orgánico
+ * ESTRATEGIA DE LA SEMANA · el banner que encabeza todas las pestañas (Sam, 2026-10-26/27; «en todos los tabs y en color
+ * diferenciador… que resalte, eye-catcher»). Va en fucsia: el turquesa es el acento del tablero y el ámbar y el rojo son
+ * de lo que pide atención, así que el banner no se confunde con ninguno. El asesor propone objetivos de crecimiento orgánico
  * para la semana de cada marca; el operador los aprueba (tal cual o editados) o los descarta. Los activos se ven con lo
  * que llevan; la semana anterior, con su resultado, qué faltó y cómo corregirlo. Lo logrado y el avance los mide
  * SignalLab: aquí no se calcula nada.
@@ -44,7 +46,7 @@ function Avance({ o }: { o: Objetivo }) {
   return (
     <div className="flex items-center gap-2 min-w-0">
       <div className="h-1.5 flex-1 min-w-16 rounded-full bg-zinc-800 overflow-hidden" aria-hidden>
-        <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
+        <div className="h-full bg-gradient-to-r from-fuchsia-500 to-violet-400" style={{ width: `${pct}%` }} />
       </div>
       <span className="text-[11px] text-zinc-300 whitespace-nowrap">{texto}</span>
     </div>
@@ -68,8 +70,8 @@ function Propuesta({ o, token, onCambio }: { o: Objetivo; token: string; onCambi
     finally { setEnviando(false); }
   };
   return (
-    <li className="rounded-lg border border-dashed border-accent/40 bg-zinc-900/40 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-accent/80"><Sparkles className="w-3 h-3" /> Propuesta del asesor</div>
+    <li className="rounded-lg border border-dashed border-fuchsia-400/50 bg-black/30 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-fuchsia-300"><Sparkles className="w-3 h-3" /> Propuesta del asesor</div>
       {editando ? (
         <div className="space-y-2">
           <input value={texto} onChange={(e) => setTexto(e.target.value)} maxLength={200} className="entrada w-full" aria-label="Objetivo" />
@@ -132,15 +134,15 @@ export function BannerObjetivos({ token, data, nombre, onCambio }: {
         const propuestas = s.objetivos.filter((o) => o.status === 'propuesta');
         const enCamino = data.pedidos.includes(s.brand_id);
         return (
-          <div key={s.brand_id} className="rounded-xl border border-accent/30 bg-accent/5 p-4 space-y-3">
+          <div key={s.brand_id} className="rounded-xl border-2 border-fuchsia-500/70 bg-gradient-to-r from-fuchsia-600/25 via-violet-700/20 to-fuchsia-900/10 p-4 space-y-3 shadow-[0_0_24px_-6px_rgba(217,70,239,0.55)]">
             <div className="flex flex-wrap items-center gap-2">
-              <Target className="w-4 h-4 text-accent" />
-              <h3 className="titulo text-lg text-zinc-100">Estrategia de la semana</h3>
-              <span className="text-[11px] text-zinc-400">{nombre(s.brand_id)} · semana del {semanaDe(s.semana)}</span>
-              {enCamino ? <span className="ml-auto text-[11px] text-accent/80 animate-pulse">Propuesta en camino…</span>
+              <Target className="w-5 h-5 text-fuchsia-300" />
+              <h3 className="titulo text-lg text-fuchsia-100">Estrategia de la semana</h3>
+              <span className="text-[11px] text-fuchsia-200/70">{nombre(s.brand_id)} · semana del {semanaDe(s.semana)}</span>
+              {enCamino ? <span className="ml-auto text-[11px] text-fuchsia-200 animate-pulse">Propuesta en camino…</span>
                 : (activos.length === 0 || propuestas.length > 0) && (
                   <button onClick={() => pedir(s.brand_id)} disabled={pidiendo === s.brand_id}
-                    className="ml-auto text-[11px] px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50">
+                    className="ml-auto text-[11px] px-2.5 py-1 rounded-lg bg-fuchsia-500/20 text-fuchsia-100 border border-fuchsia-400/40 hover:bg-fuchsia-500/30 disabled:opacity-50">
                     {propuestas.length ? 'Pedir otra propuesta' : 'Pedir propuesta'}
                   </button>
                 )}
@@ -150,7 +152,7 @@ export function BannerObjetivos({ token, data, nombre, onCambio }: {
               <ul className="space-y-2">
                 {activos.map((o) => (
                   <li key={o.id} className="space-y-1">
-                    <p className="flex items-start gap-2 text-base text-zinc-100"><span className="text-accent mt-0.5">●</span>{o.objective}</p>
+                    <p className="flex items-start gap-2 text-base text-zinc-100"><span className="text-fuchsia-400 mt-0.5">●</span>{o.objective}</p>
                     <div className="pl-5 space-y-1"><Avance o={o} /><Medida o={o} /></div>
                   </li>
                 ))}
@@ -160,7 +162,7 @@ export function BannerObjetivos({ token, data, nombre, onCambio }: {
               <ul className="space-y-2">{propuestas.map((o) => <Propuesta key={o.id} o={o} token={token} onCambio={onCambio} />)}</ul>
             )}
             {activos.length === 0 && propuestas.length === 0 && !enCamino && (
-              <p className="text-xs text-zinc-400">Todavía no hay objetivos para esta semana. El asesor los propone en su próxima ronda (de 8 a 20 h, hora de la marca), o pídelos ahora.</p>
+              <p className="text-xs text-fuchsia-100/80">Todavía no hay objetivos para esta semana. El asesor los propone en su próxima ronda (de 8 a 20 h, hora de la marca), o pídelos ahora.</p>
             )}
 
             {s.revision.length > 0 && (
@@ -192,4 +194,18 @@ export function BannerObjetivos({ token, data, nombre, onCambio }: {
       {aviso && <p className="text-[11px] text-zinc-400">{aviso}</p>}
     </section>
   );
+}
+
+/** El banner con sus datos: lo lee él mismo, para poder ir encima de cualquier pestaña. Se relee cada minuto. */
+export function EstrategiaDeLaSemana({ token, marca, marcas }: { token: string; marca: string; marcas: Marca[] }) {
+  const [data, setData] = useState<RespObjetivos | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 60_000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    let vivo = true;
+    leerObjetivos(token, { marca: marca || undefined }).then((d) => { if (vivo) setData(d); }).catch(() => { if (vivo) setData(null); });
+    return () => { vivo = false; };
+  }, [token, marca, tick]);
+  const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
+  return <BannerObjetivos token={token} data={data} nombre={nombre} onCambio={() => setTick((n) => n + 1)} />;
 }

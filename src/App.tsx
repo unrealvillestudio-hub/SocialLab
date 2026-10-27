@@ -12,6 +12,7 @@ import { AvisoComentarios, ProveedorPulso, usePulso, type FocoAsesor } from './u
 import Acciones from './views/Acciones';
 import { tramosDeCaja } from './logotipo';
 import { registrarMaquetas, registrarPerfiles } from './ui/Maqueta';
+import { EstrategiaDeLaSemana } from './ui/Objetivos';
 
 type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'mensajes' | 'acciones' | 'estadisticas' | 'calendario';
 /** `corta`: la etiqueta de la barra inferior del teléfono, donde caben siete pestañas. */
@@ -149,6 +150,8 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
             </nav>
             {catalogo.marcas.length === 0 && <Aviso>No hay marcas con cuenta conectada en tu alcance.</Aviso>}
             <AvisoComentarios marcas={catalogo.marcas} />
+            {/* La estrategia de la semana encabeza todas las pestañas (Sam, 2026-10-27). */}
+            <EstrategiaDeLaSemana token={sesion.session_token} marca={marca} marcas={catalogo.marcas} />
             {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} irA={irA} />}
             {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
             {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas}

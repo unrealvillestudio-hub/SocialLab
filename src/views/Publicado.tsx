@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, LayoutGrid, MessageCircle, RefreshCw, Radio, Square } from 'lucide-react';
+import { ChevronDown, ExternalLink, LayoutGrid, MessageCircle, RefreshCw, Radio, Square } from 'lucide-react';
 import { ops, ErrorApi, type Marca, type RespPublicado, type EnVivo, type Publicada } from '../api';
 import { Aviso, Cargando, Chip, ChipPlataforma, ChevronAsesor, VistaPrevia, bordeDePlataforma, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
 import { PillsDePost, usePulso } from '../ui/Pulso';
@@ -142,16 +142,23 @@ const Rejilla = ({ children, columnas = 1 }: { children: React.ReactNode; column
 
 function Conteos({ reg, nombre }: { reg: RespPublicado; nombre: (b: string) => string }) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-      <div className="text-xs text-zinc-400 mb-2"><b className="titulo text-accent text-2xl mr-1">{reg.total}</b> publicadas en la ventana</div>
-      <div className="flex flex-wrap gap-2">
+    // Plegado por defecto (Sam, 2026-10-27: «hazlo desplegable para que no ocupe la mitad de la pantalla»).
+    <details className="group rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+      <summary className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <b className="titulo text-accent text-2xl">{reg.total}</b> publicadas en la ventana
+        {reg.conteos.length > 0 && <span className="ml-auto flex items-center gap-1 text-[11px] text-zinc-500">
+          <ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180" />
+          <span className="group-open:hidden">ver el desglose ({reg.conteos.length})</span><span className="hidden group-open:inline">ocultar</span>
+        </span>}
+      </summary>
+      <div className="flex flex-wrap gap-2 mt-2">
         {reg.conteos.map((c) => (
           <span key={`${c.brand_id}-${c.platform}-${c.formato}`} className="text-[11px] px-2 py-1 rounded-md bg-zinc-800/80 text-zinc-300">
             {nombre(c.brand_id)} · {etiquetaPlataforma(c.platform)} · {etiquetaFormato(c.formato)} <b className="text-accent">{c.total}</b>
           </span>
         ))}
       </div>
-    </div>
+    </details>
   );
 }
 
