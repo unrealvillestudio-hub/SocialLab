@@ -148,7 +148,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
             </nav>
             {catalogo.marcas.length === 0 && <Aviso>No hay marcas con cuenta conectada en tu alcance.</Aviso>}
             <AvisoComentarios marcas={catalogo.marcas} />
-            {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
+            {pestana === 'hoy' && <Hoy token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} irA={irA} />}
             {pestana === 'publicado' && <Publicado token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas} />}
             {pestana === 'comentarios' && <Comentarios token={sesion.session_token} marca={marca} plataforma={plataforma} marcas={catalogo.marcas}
               post={postComentarios} onQuitarFiltro={() => setPostComentarios(null)} />}
