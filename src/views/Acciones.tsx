@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Check, Copy, ExternalLink, Lock, RefreshCw, Send, X } from 'lucide-react';
-import { ops, responderComentario, comentarEnPublicacion, ErrorApi, type Marca, type Publicada, type Recomendacion, type RespPublicado, type Tarjeta } from '../api';
+import { objetivos as leerObjetivos, ops, responderComentario, comentarEnPublicacion, ErrorApi, type Marca, type Publicada, type Recomendacion, type RespPublicado, type Tarjeta } from '../api';
 import { claveDeCuenta } from '../asesor';
 import { usePulso, PillsDePost, type FocoAsesor } from '../ui/Pulso';
 import { Aviso, Chip, ChipPlataforma, Miniatura, VistaPrevia, bordeDePlataforma, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
@@ -34,6 +34,9 @@ const CHIP_SEVERIDAD: Record<string, string> = {
 const ESTADO: Record<string, string> = { nueva: 'nueva', vista: 'vista', seguida: 'seguida', descartada: 'descartada', resuelta: 'resuelta' };
 const numero = (n: number | null) => (n == null ? '—' : (Number.isInteger(Number(n)) ? Number(n) : Math.round(Number(n) * 10) / 10).toLocaleString('en-US'));
 
+/** Los objetivos de la semana por id: la recomendación dice a cuál apunta (Sam, 2026-10-27). */
+const ObjetivosDeLaSemana = createContext<ReadonlyMap<string, string>>(new Map());
+
 export default function Acciones({ token, marca, plataforma, marcas, foco, onQuitarFoco }: {
   token: string; marca: string; plataforma: string; marcas: Marca[]; foco: FocoAsesor; onQuitarFoco: () => void;
 }) {
@@ -54,6 +57,15 @@ export default function Acciones({ token, marca, plataforma, marcas, foco, onQui
     ops<RespPublicado>(token, 'publicado', { marca: marca || undefined, desde: new Date(Date.now() - 30 * DIA).toISOString() })
       .then((r) => { if (vivo) setPosts(new Map(r.publicaciones.map((p) => [p.id, p]))); })
       .catch((e) => console.error('[acciones] publicaciones:', e instanceof Error ? e.message : e));
+    return () => { vivo = false; };
+  }, [token, marca]);
+
+  const [objetivosPorId, setObjetivosPorId] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    let vivo = true;
+    leerObjetivos(token, { marca: marca || undefined })
+      .then((r) => { if (vivo) setObjetivosPorId(new Map(r.semanas.flatMap((s) => s.objetivos.map((o) => [o.id, o.objective] as const)))); })
+      .catch((e) => console.error('[acciones] objetivos:', e instanceof Error ? e.message : e));
     return () => { vivo = false; };
   }, [token, marca]);
 
@@ -86,6 +98,7 @@ export default function Acciones({ token, marca, plataforma, marcas, foco, onQui
   const claveFoco = foco ? ('post' in foco ? `p:${foco.post}` : `c:${foco.cuenta}`) : null;
 
   return (
+    <ObjetivosDeLaSemana.Provider value={objetivosPorId}>
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <p className="flex-1 min-w-[14rem] text-[11px] text-zinc-500">
@@ -128,6 +141,7 @@ export default function Acciones({ token, marca, plataforma, marcas, foco, onQui
         </section>
       ))}
     </div>
+    </ObjetivosDeLaSemana.Provider>
   );
 }
 
@@ -295,6 +309,8 @@ function TarjetaAsesor({ t, token, enlace, huso }: { t: Tarjeta; token: string; 
  * edita. Sin comentario al que responder, el borrador se copia y se publica en la app de la plataforma.
  */
 function RecomendacionAsesor({ r, token, enlace }: { r: Recomendacion; token: string; enlace: string | null }) {
+  const objetivosDeLaSemana = useContext(ObjetivosDeLaSemana);
+  const meta = r.growth_goal_id ? objetivosDeLaSemana.get(r.growth_goal_id) ?? null : null;
   const { marcarRecomendacion, comentariosPorId, recargarTarjetas } = usePulso();
   const [texto, setTexto] = useState(r.draft ?? '');
   const [enviando, setEnviando] = useState<null | 'publica' | 'privada' | 'estado'>(null);
@@ -344,6 +360,7 @@ function RecomendacionAsesor({ r, token, enlace }: { r: Recomendacion; token: st
       </div>
       <p className="text-xs text-zinc-100">{r.recommendation}</p>
       <p className="text-[11px]"><span className="text-zinc-500">Para qué: </span><span className="text-accent">{r.objective}</span></p>
+      {meta && <p className="text-[11px]"><span className="text-zinc-500">Objetivo de la semana: </span><span className="text-zinc-200">● {meta}</span></p>}
       {comentario && (
         <blockquote className="border-l-2 border-amber-400/50 pl-2 text-xs">
           <span className="text-zinc-400">{comentario.author_name ?? 'autor desconocido'}: </span>
