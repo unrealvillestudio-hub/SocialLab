@@ -70,5 +70,12 @@ test('los perfiles vienen del dato: el catálogo lee intel.account_profiles y la
   }
 });
 
+test('el catálogo (con los perfiles) se relee solo: cada pocos minutos y al volver a la pestaña', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  assert.match(app, /setInterval\(\(\) => leer\(false\), CATALOGO_RELECTURA_MS\)/);
+  assert.match(app, /addEventListener\('visibilitychange'/);
+  assert.match(app, /registrarPerfiles\(c\.perfiles\)/);
+});
+
 console.log(fallos ? `\n${fallos} falla(s)` : '\nTodo verde.');
 if (fallos) process.exit(1);
