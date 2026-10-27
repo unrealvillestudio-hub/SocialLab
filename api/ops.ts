@@ -93,6 +93,21 @@ async function maquetasDePlataforma(): Promise<{ platform: string; media_format:
   }
 }
 
+/**
+ * El usuario y la foto de cada cuenta (`intel.account_profiles`, los lee SignalLab; Sam 2026-10-27). Antes de la migración
+ * la tabla no existe: las maquetas se ven con la inicial, el tablero no deja de cargar.
+ */
+async function perfilesDeCuenta(ids: string[]): Promise<{ brand_id: string; platform: string; username: string | null; display_name: string | null; picture_url: string | null }[]> {
+  if (!ids.length) return [];
+  try {
+    return await sbGet<{ brand_id: string; platform: string; username: string | null; display_name: string | null; picture_url: string | null }>(
+      `account_profiles?select=brand_id,platform,username,display_name,picture_url&brand_id=${enLista(ids)}`, 'intel');
+  } catch (err) {
+    console.error(`[ops] perfiles de cuenta sin leer: ${err instanceof Error ? err.message : err}`);
+    return [];
+  }
+}
+
 async function catalogo(alcance: Alcance) {
   const [cuentas, plataformas, maquetas] = await Promise.all([cuentasDe(alcance), coloresDePlataforma(), maquetasDePlataforma()]);
   const ids = alcance === TODAS ? [...new Set(cuentas.map((c) => c.brand_id))] : alcance;
@@ -101,6 +116,7 @@ async function catalogo(alcance: Alcance) {
       `brands?select=id,display_name,publish_timezone&id=${enLista(ids)}`)
     : [];
   const porId = new Map(marcas.map((m) => [m.id, m]));
+  const perfiles = await perfilesDeCuenta(ids);
   const canales = ids.length
     ? canalesPorMarca(await sbGet<Canal>(
       `brand_publish_channels?select=brand_id,platform_key,publication_path,provider:config->>provider_platform&brand_id=${enLista(ids)}`, 'intel'))
@@ -116,6 +132,7 @@ async function catalogo(alcance: Alcance) {
     alcance_total: alcance === TODAS,
     plataformas,
     maquetas,
+    perfiles,
   };
 }
 

@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { maquetaDe, registrarMaquetas } from '../src/maqueta.ts';
+import { cuentaDe, maquetaDe, registrarMaquetas } from '../src/maqueta.ts';
 
 let fallos = 0;
 function test(nombre, fn) {
@@ -48,6 +48,25 @@ test('las tarjetas se dibujan con la maqueta, sin botón: Publicado y Acciones',
     const v = readFileSync(new URL(f, import.meta.url), 'utf8');
     assert.match(v, /<Maqueta platform=/, f);
     assert.match(v, /maquetaDe\(/, f);
+  }
+});
+
+const PERFILES = [
+  { brand_id: 'B', platform: 'P2', username: 'b.texto', display_name: 'B Texto', picture_url: 'https://x/p2.jpg' },
+  { brand_id: 'B', platform: 'P1', username: 'b.foto', display_name: 'B', picture_url: 'https://x/p1.jpg' },
+  { brand_id: 'C', platform: 'P2', username: null, display_name: 'C Nombre', picture_url: null },
+];
+test('cuentaDe: el perfil propio de la plataforma; si no hay, el de la red donde la foto manda; si no, la marca', () => {
+  assert.deepEqual(cuentaDe('B', 'P2', 'Marca B', PERFILES, REGLAS), { cuenta: 'b.texto', foto: 'https://x/p2.jpg' }, 'propio');
+  assert.deepEqual(cuentaDe('B', 'P9', 'Marca B', PERFILES, REGLAS), { cuenta: 'b.foto', foto: 'https://x/p1.jpg' }, 'sin perfil: el de feed_imagen');
+  assert.deepEqual(cuentaDe('C', 'P2', 'Marca C', PERFILES, REGLAS), { cuenta: 'C Nombre', foto: null }, 'sin usuario: el nombre');
+  assert.deepEqual(cuentaDe('Z', 'P1', 'Marca Z', PERFILES, REGLAS), { cuenta: 'Marca Z', foto: null }, 'sin perfiles: como antes');
+});
+test('los perfiles vienen del dato: el catálogo lee intel.account_profiles y las tarjetas usan cuentaDe', () => {
+  const ops = readFileSync(new URL('../api/ops.ts', import.meta.url), 'utf8');
+  assert.match(ops, /account_profiles\?select=brand_id,platform,username,display_name,picture_url/);
+  for (const f of ['../src/views/Publicado.tsx', '../src/views/Acciones.tsx']) {
+    assert.match(readFileSync(new URL(f, import.meta.url), 'utf8'), /\.\.\.cuentaDe\(/, f);
   }
 });
 

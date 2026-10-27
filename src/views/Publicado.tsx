@@ -3,7 +3,7 @@ import { ExternalLink, LayoutGrid, MessageCircle, RefreshCw, Radio, Square } fro
 import { ops, ErrorApi, type Marca, type RespPublicado, type EnVivo, type Publicada } from '../api';
 import { Aviso, Cargando, Chip, ChipPlataforma, ChevronAsesor, VistaPrevia, bordeDePlataforma, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
 import { PillsDePost, usePulso } from '../ui/Pulso';
-import { Maqueta, maquetaDe } from '../ui/Maqueta';
+import { cuentaDe, Maqueta, maquetaDe } from '../ui/Maqueta';
 
 /** Cada cuánto se vuelve a leer el registro y las métricas de SignalLab (sólo base: barato). */
 const REFRESCO_REGISTRO_MS = 60_000;
@@ -223,7 +223,7 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso, compacta = false }: {
       {conMaqueta ? (
         <>
           <Maqueta platform={p.platform} formato={p.formato} datos={{
-            cuenta: nombre, imagenes: [...new Set([imagen, ...(p.media_urls ?? [])].filter((x): x is string => !!x))], texto,
+            ...cuentaDe(p.brand_id, p.platform, nombre), imagenes: [...new Set([imagen, ...(p.media_urls ?? [])].filter((x): x is string => !!x))], texto,
             fecha: fechaHora(p.published_at, huso), likes: contador('likes'), comentarios: contador('comments'), onImagen: setVista,
           }} />
           {vista && <VistaPrevia src={vista} onCerrar={() => setVista(null)} />}
@@ -266,7 +266,7 @@ function TarjetaVivo({ v, nombre, huso }: { v: EnVivo; nombre: string; huso: str
       {conMaqueta ? (
         <>
           <Maqueta platform={v.platform} formato={v.formato} datos={{
-            cuenta: nombre, imagenes: v.imagen ? [v.imagen] : [], texto: v.texto, fecha: fechaHora(v.publicado_en, huso),
+            ...cuentaDe(v.brand_id, v.platform, nombre), imagenes: v.imagen ? [v.imagen] : [], texto: v.texto, fecha: fechaHora(v.publicado_en, huso),
             likes: contador('likes'), comentarios: contador('comments'), onImagen: setVista,
           }} />
           {vista && <VistaPrevia src={vista} onCerrar={() => setVista(null)} />}

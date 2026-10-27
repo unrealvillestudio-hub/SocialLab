@@ -4,7 +4,7 @@ import { objetivos as leerObjetivos, ops, responderComentario, comentarEnPublica
 import { claveDeCuenta } from '../asesor';
 import { usePulso, PillsDePost, type FocoAsesor } from '../ui/Pulso';
 import { Aviso, Chip, ChipPlataforma, Miniatura, VistaPrevia, bordeDePlataforma, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
-import { Maqueta, maquetaDe } from '../ui/Maqueta';
+import { cuentaDe, Maqueta, maquetaDe } from '../ui/Maqueta';
 
 /**
  * ACCIONES · el asesor (Fase 4; tarjetas de SignalLab, `intel.signal_cards`). Sam, 2026-10-25: «un community
@@ -168,7 +168,7 @@ function Publicacion({ p, id, nombre, huso, t }: {
       {conMaqueta && p ? (
         <div className="w-full sm:w-64 shrink-0 rounded-lg border border-zinc-800 overflow-hidden">
           <Maqueta platform={p.platform} formato={p.formato} datos={{
-            cuenta: nombre(t.brand_id), imagenes: [...new Set([p.image_url, ...(p.media_urls ?? [])].filter((x): x is string => !!x))],
+            ...cuentaDe(t.brand_id, p.platform, nombre(t.brand_id)), imagenes: [...new Set([p.image_url, ...(p.media_urls ?? [])].filter((x): x is string => !!x))],
             texto: p.copy_text, fecha: fechaHora(p.published_at, huso(t.brand_id)), onImagen: setVista,
           }} />
           {vista && <VistaPrevia src={vista} onCerrar={() => setVista(null)} />}
