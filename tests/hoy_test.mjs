@@ -124,8 +124,12 @@ test('la semana de cada marca es la de su huso, y la revisión es la de la seman
 console.log('\n── 3 · LA VISTA Y EL ENDPOINT USAN LO QUE DICEN ──');
 const HOY = readFileSync(new URL('../src/views/Hoy.tsx', import.meta.url), 'utf8');
 const API = readFileSync(new URL('../api/objetivos.ts', import.meta.url), 'utf8');
-test('Hoy: banner, atención, lo de hoy y lo publicado; cada fuente por separado', () => {
-  assert.match(HOY, /<BannerObjetivos /);
+test('Hoy: atención, lo de hoy y lo publicado; cada fuente por separado', () => {
+  // El banner salió de Hoy: lo dibuja App encima de todas las pestañas (Sam, 2026-10-27).
+  assert.doesNotMatch(HOY, /<BannerObjetivos /);
+  const APP = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  assert.match(APP, /<EstrategiaDeLaSemana token=/, 'el banner encabeza todas las pestañas');
+  assert.ok(APP.indexOf('<EstrategiaDeLaSemana') < APP.indexOf("{pestana === 'hoy'"), 'va antes de cualquier pestaña');
   assert.match(HOY, /itemsDeAtencion\(\{/);
   assert.match(HOY, /franjasDeHoy\(/);
   assert.match(HOY, /No se pudo leer: /, 'una fuente que falla se nombra y no tumba a las demás');

@@ -6,13 +6,12 @@ import {
 } from '../api';
 import { franjasDeHoy, haceCuanto, itemsDeAtencion, type Destino, type ItemAtencion, type Nivel } from '../atencion';
 import { Aviso, BotonActualizar, Chip, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
-import { BannerObjetivos } from '../ui/Objetivos';
 import { PillsDePost } from '../ui/Pulso';
 
 /**
  * HOY · el centro de atención (Sam, 2026-10-26: «¿no se supone que aquí estaría lo que más atención deberíamos prestarle
  * o estar pendientes?»). De arriba abajo:
- *   1. La estrategia de la semana: los objetivos que el operador aprobó, lo que llevan, las propuestas del asesor por
+ *   1. La estrategia de la semana (desde el 2026-10-27 la dibuja App encima de todas las pestañas, no esta vista): los objetivos que el operador aprobó, lo que llevan, las propuestas del asesor por
  *      decidir y la revisión de la semana pasada.
  *   2. Lo que pide atención, por urgencia (`src/atencion.ts`): respuestas fallidas, ventanas de mensaje por cerrar, lo que
  *      pasó la meta de respuesta, lo que espera, consejos y objetivos sin decidir, publicaciones manuales y huecos.
@@ -107,7 +106,6 @@ export default function Hoy({ token, marca, plataforma, marcas, irA }: {
 
   return (
     <div className="space-y-5">
-      <BannerObjetivos token={token} data={obj.data} nombre={nombre} onCambio={() => setTick((n) => n + 1)} />
 
       <section className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
