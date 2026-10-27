@@ -139,8 +139,9 @@ await test('5 · no escribe; el núcleo declara su origen y no nombra marcas en 
   const src = readFileSync(new URL('../api/adapt.ts', import.meta.url), 'utf8');
   assert.ok(!/scheduled_posts'|ops_generation_ledger|method: 'POST'/.test(src.replace(/^\s*(\/\/|\*).*$/gm, '')));
   const core = readFileSync(new URL('../api/_adaptCore.ts', import.meta.url), 'utf8');
-  assert.match(core, /^\/\/ GENERADO por scripts\/generar_adapt_core\.mjs/m);
-  assert.match(core, /^\/\/ Origen: unrlvl-iid-functions@[0-9a-f]{7,}/m);
+  // Fase 6c (2026-10-27): el núcleo es la FUENTE y declara de dónde vino.
+  assert.match(core, /^\/\/ FUENTE del adaptador de SocialLab desde la Fase 6c/m);
+  assert.match(core, /^\/\/ Origen de la copia: unrlvl-iid-functions@[0-9a-f]{7,}/m);
   const codigo = core.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
   assert.ok(!/NeuroneSCF|ForumPHs|FORUMPHS|Unrealville|UNRLVL|LucienSael|PROPIETARIOS/.test(codigo), 'una marca escrita en código');
   assert.ok(!/resolvePlatformRule\(|fetchAdapterLanguageDirective\(|PLATFORM_RULES/.test(codigo), 'el núcleo resuelve lo que debe llegar resuelto');
