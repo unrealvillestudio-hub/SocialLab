@@ -1,6 +1,6 @@
 // Cliente del tablero. Todo pasa por la API de SocialLab (`/api/session`, `/api/ops`): el navegador
 // nunca lee la base ni las plataformas directamente.
-import type { ReglaMaqueta } from './maqueta';
+import type { PerfilDeCuenta, ReglaMaqueta } from './maqueta';
 
 export interface Sesion { session_token: string; sub: string; role: string; brand_scope: string[]; expires_in: number }
 
@@ -46,6 +46,8 @@ export interface Catalogo {
   sub: string; role: string; marcas: Marca[]; alcance_total: boolean; plataformas?: PlataformaColor[];
   /** La maqueta de cada plataforma y formato (`intel.platform_previews`): la tarjeta se dibuja como la publicación. */
   maquetas?: ReglaMaqueta[];
+  /** El usuario y la foto de cada cuenta (`intel.account_profiles`): la maqueta se dibuja con ellos. */
+  perfiles?: PerfilDeCuenta[];
 }
 
 export interface Metrica { metric: string; value: number; age_minutes: number; fetched_at: string }

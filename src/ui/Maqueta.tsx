@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { BarChart2, Bookmark, Globe, Heart, MessageCircle, MoreHorizontal, Repeat2, Send, Share2, ThumbsUp } from 'lucide-react';
 import { maquetaDe, type Proporcion } from '../maqueta';
-export { maquetaDe, registrarMaquetas, type FormaMaqueta, type Proporcion, type ReglaMaqueta } from '../maqueta';
+export { cuentaDe, maquetaDe, registrarMaquetas, registrarPerfiles, type FormaMaqueta, type PerfilDeCuenta, type Proporcion, type ReglaMaqueta } from '../maqueta';
 
 /**
  * LA TARJETA COMO LA PUBLICACIÓN EN SU PLATAFORMA (Sam, 2026-10-27: «una simulación real de cada plataforma, que se
@@ -16,6 +16,8 @@ export { maquetaDe, registrarMaquetas, type FormaMaqueta, type Proporcion, type 
 export interface DatosMaqueta {
   /** El nombre de la cuenta tal como se ve. */
   cuenta: string;
+  /** La foto de perfil (`cuentaDe`); sin ella, la inicial. */
+  foto?: string | null;
   imagenes: readonly string[];
   texto: string | null;
   /** La fecha ya formateada en el huso de la marca. */
@@ -33,14 +35,24 @@ const PROPORCION: Record<Exclude<Proporcion, 'natural'>, string> = { '1:1': '1 /
 const num = (n: number | null | undefined) => (n == null ? null : new Intl.NumberFormat('es', { notation: n >= 10_000 ? 'compact' : 'standard' }).format(n));
 const inicial = (s: string) => (s.trim()[0] ?? '·').toUpperCase();
 
-function Avatar({ cuenta, tam = 32, anillo = false }: { cuenta: string; tam?: number; anillo?: boolean }) {
+function Avatar({ cuenta, foto, tam = 32 }: { cuenta: string; foto?: string | null; tam?: number }) {
+  const [rota, setRota] = useState(false);
+  if (foto && !rota) {
+    return <img src={foto} alt="" referrerPolicy="no-referrer" onError={() => setRota(true)}
+      className="shrink-0 rounded-full object-cover bg-zinc-800 border border-white/10" style={{ width: tam, height: tam }} />;
+  }
   return (
-    <span className="shrink-0 rounded-full p-[2px]" style={anillo ? { background: 'linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)' } : undefined}>
-      <span className="flex items-center justify-center rounded-full bg-zinc-700 text-white font-semibold border-2 border-black"
-        style={{ width: tam, height: tam, fontSize: tam * 0.42 }}>{inicial(cuenta)}</span>
-    </span>
+    <span className="shrink-0 flex items-center justify-center rounded-full bg-zinc-700 text-white font-semibold border border-white/10"
+      style={{ width: tam, height: tam, fontSize: tam * 0.42 }}>{inicial(cuenta)}</span>
   );
 }
+
+/** El menú de la publicación como lo dibuja la app: dos rayas, la de abajo más corta. */
+const MenuDosRayas = () => (
+  <svg viewBox="0 0 24 24" className="w-6 h-6 text-zinc-100" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+    <path d="M4 8h16M4 15h11" />
+  </svg>
+);
 
 /** La imagen en su proporción: fija si la regla la fija; si no, la suya, entre 4:5 y 1.91:1 (como los feeds). */
 function Medio({ src, aspect, onImagen, className }: { src: string | undefined; aspect: Proporcion; onImagen?: (s: string) => void; className?: string }) {
@@ -84,13 +96,20 @@ function Recortado({ texto, lineas, mas, prefijo }: { texto: string | null; line
 
 function FeedImagen({ d, aspect }: { d: DatosMaqueta; aspect: Proporcion }) {
   return (
-    <div className="bg-black text-zinc-100">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <Avatar cuenta={d.cuenta} anillo />
-        <span className="text-[13px] font-semibold truncate flex-1">{d.cuenta}</span>
-        <MoreHorizontal className="w-4 h-4 text-zinc-300" />
+    <div className="bg-[#0c1014] text-zinc-100">
+      <div className="flex items-center gap-2.5 px-3 py-2.5">
+        <Avatar cuenta={d.cuenta} foto={d.foto} tam={34} />
+        <span className="text-[13px] @[15rem]:text-[14px] font-semibold truncate flex-1">{d.cuenta}</span>
+        <MenuDosRayas />
       </div>
-      <Medio src={d.imagenes[0]} aspect={aspect} onImagen={d.onImagen} />
+      <div className="relative">
+        <Medio src={d.imagenes[0]} aspect={aspect} onImagen={d.onImagen} />
+        {d.imagenes.length > 1 && (
+          <span className="absolute top-2.5 right-2.5 rounded-full bg-[#121212]/80 px-2.5 py-1 text-[11px] font-medium text-white pointer-events-none">
+            1/{d.imagenes.length}
+          </span>
+        )}
+      </div>
       <div className="px-3 pt-2 pb-3 space-y-1">
         <div className="flex items-center gap-3.5">
           <Heart className="w-[22px] h-[22px]" /><MessageCircle className="w-[22px] h-[22px] -scale-x-100" /><Send className="w-[21px] h-[21px]" />
@@ -110,7 +129,7 @@ function FeedTexto({ d, aspect }: { d: DatosMaqueta; aspect: Proporcion }) {
   return (
     <div className="bg-[#242526] text-[#e4e6eb]">
       <div className="flex items-center gap-2 px-3 pt-3">
-        <Avatar cuenta={d.cuenta} tam={36} />
+        <Avatar cuenta={d.cuenta} foto={d.foto} tam={36} />
         <div className="min-w-0 flex-1 leading-tight">
           <p className="text-[13px] font-semibold truncate">{d.cuenta}</p>
           <p className="text-[11px] text-[#b0b3b8] flex items-center gap-1 truncate">{d.fecha} · <Globe className="w-3 h-3 shrink-0" /></p>
@@ -138,7 +157,7 @@ function FeedTexto({ d, aspect }: { d: DatosMaqueta; aspect: Proporcion }) {
 function FeedBreve({ d, aspect }: { d: DatosMaqueta; aspect: Proporcion }) {
   return (
     <div className="bg-black text-[#e7e9ea] flex gap-2.5 px-3 py-3">
-      <Avatar cuenta={d.cuenta} tam={36} />
+      <Avatar cuenta={d.cuenta} foto={d.foto} tam={36} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <p className="text-[13px] truncate"><span className="font-bold">{d.cuenta}</span> <span className="text-[#71767b]">· {d.fecha}</span></p>
         <Recortado texto={d.texto} lineas={6} mas="Mostrar más" />
@@ -160,7 +179,7 @@ function Vertical({ d }: { d: DatosMaqueta }) {
       <div className="absolute inset-0"><Medio src={d.imagenes[0]} aspect="9:16" onImagen={d.onImagen} className="h-full" /></div>
       <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/85 to-transparent pointer-events-none" />
       <div className="absolute right-1.5 bottom-14 flex flex-col items-center gap-2 @[14rem]:gap-3 text-[10px] @[14rem]:text-[11px] font-semibold drop-shadow">
-        <Avatar cuenta={d.cuenta} tam={34} />
+        <Avatar cuenta={d.cuenta} foto={d.foto} tam={34} />
         <span className="flex flex-col items-center"><Heart className="w-5 h-5 @[14rem]:w-7 @[14rem]:h-7 fill-white/10" />{num(d.likes) ?? ''}</span>
         <span className="flex flex-col items-center"><MessageCircle className="w-5 h-5 @[14rem]:w-7 @[14rem]:h-7" />{num(d.comentarios) ?? ''}</span>
         <Bookmark className="w-5 h-5 @[14rem]:w-6 @[14rem]:h-6" />

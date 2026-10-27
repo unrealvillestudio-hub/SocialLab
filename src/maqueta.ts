@@ -22,3 +22,32 @@ export function maquetaDe(platform: string | null | undefined, formato: string |
   return r ? { layout: r.layout, aspect: r.aspect } : null;
 }
 
+
+/**
+ * CÓMO SE VE LA CUENTA EN LA MAQUETA (Sam, 2026-10-27: «de ahí utilizas el profile pic para las demás plataformas»).
+ * Los perfiles son dato (`intel.account_profiles`, los lee SignalLab) y llegan con el catálogo.
+ */
+export interface PerfilDeCuenta { brand_id: string; platform: string; username: string | null; display_name: string | null; picture_url: string | null }
+
+const PERFILES: PerfilDeCuenta[] = [];
+/** Se llama con el catálogo, igual que las maquetas. */
+export function registrarPerfiles(xs: readonly PerfilDeCuenta[] | undefined): void {
+  PERFILES.splice(0, PERFILES.length, ...(xs ?? []));
+}
+
+/**
+ * El usuario y la foto con que se dibuja la cuenta de una marca en una plataforma: los de su perfil en esa plataforma.
+ * Una plataforma sin perfil leído toma los de la red donde la foto manda —la de maqueta `feed_imagen`— y, si no, los de
+ * cualquier perfil de la marca con foto. Sin ninguno, el nombre de la marca y su inicial, como antes.
+ */
+export function cuentaDe(brandId: string, platform: string | null | undefined, nombreMarca: string,
+  perfiles: readonly PerfilDeCuenta[] = PERFILES, reglas: readonly ReglaMaqueta[] = REGLAS): { cuenta: string; foto: string | null } {
+  const deLaMarca = perfiles.filter((p) => p.brand_id === brandId);
+  const propio = deLaMarca.find((p) => p.platform === platform);
+  const conFoto = deLaMarca.filter((p) => p.picture_url)
+    .sort((a, b) => Number(maquetaDe(b.platform, null, reglas)?.layout === 'feed_imagen') - Number(maquetaDe(a.platform, null, reglas)?.layout === 'feed_imagen'))[0];
+  return {
+    cuenta: propio?.username ?? propio?.display_name ?? conFoto?.username ?? conFoto?.display_name ?? nombreMarca,
+    foto: propio?.picture_url ?? conFoto?.picture_url ?? null,
+  };
+}
