@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { RefreshCw, X } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -128,5 +128,30 @@ export function ChipIntencion({ i }: { i: { label: string; display_color: string
       title="Intención del comentario: la bandeja pone primero las de mayor prioridad">
       {i.label}
     </span>
+  );
+}
+
+/**
+ * «Actualizar» de una bandeja (Sam, 2026-10-26: «el botón de Actualizar no ejecuta nada»). Relee la base al instante y
+ * lo dice: gira mientras lee. Lo nuevo de la plataforma llega con la lectura de SignalLab, que `EstadoDeLectura` fecha.
+ */
+export function BotonActualizar({ cargando, onClick }: { cargando: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} disabled={cargando} aria-busy={cargando}
+      className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700 disabled:opacity-60">
+      <RefreshCw className={cn('w-3.5 h-3.5', cargando && 'animate-spin')} /> {cargando ? 'Actualizando…' : 'Actualizar'}
+    </button>
+  );
+}
+
+/** Cuándo se releyó la bandeja y cuándo leyó SignalLab las plataformas por última vez (cada 15 min). */
+export function EstadoDeLectura({ actualizadoEn, leidoEn, ahora = Date.now() }: { actualizadoEn: number | null; leidoEn?: string | null; ahora?: number }) {
+  if (!actualizadoEn && !leidoEn) return null;
+  const min = leidoEn ? Math.max(0, Math.round((ahora - Date.parse(leidoEn)) / 60_000)) : null;
+  return (
+    <p className="text-[10px] text-zinc-500">
+      {actualizadoEn && <>Bandeja actualizada a las {new Date(actualizadoEn).toLocaleTimeString('es')}.</>}
+      {min !== null && <> Las plataformas se leyeron {min === 0 ? 'hace menos de un minuto' : `hace ${min} min`}; se vuelven a leer cada 15 min: lo que llegue después aparece en la próxima lectura.</>}
+    </p>
   );
 }

@@ -263,5 +263,29 @@ test('11 · el handler lee el catálogo sin nombrar intenciones y tolera que no 
   assert.ok(!/'(queja|compra|elogio)'/.test(core + src), 'una intención nombrada en el código');
 });
 
+// ── 12 · ACTUALIZAR Y LO «NUEVO» (Sam, 2026-10-26) ────────────────────────────────────────────────
+test('12 · «Actualizar» dice que trabaja y cuándo leyó SignalLab; las dos bandejas traen leido_en', () => {
+  const comp = readFileSync(new URL('../src/ui/components.tsx', import.meta.url), 'utf8');
+  assert.ok(/export function BotonActualizar/.test(comp) && /animate-spin/.test(comp) && /Actualizando…/.test(comp));
+  assert.ok(/export function EstadoDeLectura/.test(comp));
+  for (const v of ['Comentarios', 'Mensajes']) {
+    const src = readFileSync(new URL(`../src/views/${v}.tsx`, import.meta.url), 'utf8');
+    assert.ok(/<BotonActualizar cargando=\{cargando\}/.test(src), `${v} sin BotonActualizar`);
+    assert.ok(/\.finally\(\(\) => vivo && setCargando\(false\)\)/.test(src), `${v} no apaga el «Actualizando…»`);
+    assert.ok(/<EstadoDeLectura actualizadoEn=\{actualizadoEn\} leidoEn=\{data\?\.leido_en\} \/>/.test(src));
+  }
+  for (const a of ['comments', 'mensajes']) {
+    const src = readFileSync(new URL(`../api/${a}.ts`, import.meta.url), 'utf8');
+    assert.ok(/ultimaLecturaDeSignalLab\(\)/.test(src) && /leido_en: leidoEn/.test(src), `${a} sin leido_en`);
+  }
+});
+test('12 · lo «nuevo» se apaga al estar en la bandeja o cuando su publicación ya no tiene nada pendiente', () => {
+  const pulso = readFileSync(new URL('../src/ui/Pulso.tsx', import.meta.url), 'utf8');
+  assert.ok(/marcarVistos: \(\) => setNuevos/.test(pulso));
+  assert.ok(/\.filter\(\(x\) => !\(x\.en_bandeja && x\.scheduled_post_id && !porPost\.has\(x\.scheduled_post_id\)\)\)/.test(pulso));
+  const vista = readFileSync(new URL('../src/views/Comentarios.tsx', import.meta.url), 'utf8');
+  assert.ok(/useEffect\(\(\) => \{ marcarVistos\(\); \}, \[marcarVistos, data\]\)/.test(vista));
+});
+
 if (fallos) { console.error(`\n${fallos} fallo(s)`); process.exit(1); }
 console.log('\ncomentarios_test: OK');

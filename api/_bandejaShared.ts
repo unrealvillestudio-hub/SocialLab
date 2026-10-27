@@ -69,3 +69,19 @@ export async function metasDeRespuesta(marcas: typeof TODAS | string[]): Promise
   const d = Number(conf[0]?.value);
   return { metas, porDefecto: Number.isFinite(d) && d > 0 ? d : null };
 }
+
+/**
+ * Cuándo terminó la última lectura de SignalLab (`intel.signal_collector_runs`): lo que la bandeja tiene de la
+ * plataforma es de ese momento. «Actualizar» relee la base al instante; la plataforma se relee en la próxima corrida.
+ * Si no se puede leer, null: la bandeja sigue sin la hora.
+ */
+export async function ultimaLecturaDeSignalLab(): Promise<string | null> {
+  try {
+    const [r] = await sbGet<{ finished_at: string | null }>(
+      'signal_collector_runs?select=finished_at&finished_at=not.is.null&order=finished_at.desc&limit=1', 'intel');
+    return r?.finished_at ?? null;
+  } catch (e) {
+    console.error(`[bandeja] última lectura de SignalLab sin leer: ${e instanceof Error ? e.message : e}`);
+    return null;
+  }
+}
