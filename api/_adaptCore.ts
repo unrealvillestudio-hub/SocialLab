@@ -1,7 +1,9 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// GENERADO por scripts/generar_adapt_core.mjs — NO EDITAR A MANO mientras dure la Fase 6.
-// Origen: unrlvl-iid-functions@9487d3d · supabase/functions/content-run-stage/index.ts
-// Bloques copiados sin reescribir (md5 del texto de origen):
+// FUENTE del adaptador de SocialLab desde la Fase 6c (2026-10-27). SE EDITA AQUÍ.
+// Hasta ese día este archivo lo GENERABA `scripts/generar_adapt_core.mjs` (retirado en la 6c) copiando, sin reescribir,
+// los bloques del adaptador que vivían en `unrlvl-iid-functions/supabase/functions/content-run-stage/index.ts`.
+// Origen de la copia: unrlvl-iid-functions@9487d3d (verificado idéntico a main el 2026-10-27).
+// md5 de los bloques de origen, para la trazabilidad de la mudanza:
 //   SIGNCANON          e25195c61a3710340af474b43e206267
 //   CT-PLATFORM        112e180404a4781628955d6b22db9ea2
 //   VOICECONSTRAINTS   30293c28b084361fbf4692299164e7c5
@@ -9,10 +11,15 @@
 //   TITLEADAPT         c7f0b86889695db3394db3f3de23acdc
 //   constantes         4d3fad611af0bb4792f3f51ca8d743f3
 //   runSocialLabDirect 4a9d26107db702889746d6f99582c160
-// Transformaciones (y sólo éstas): 5, descritas en el generador.
+// Las 5 transformaciones de la copia: (1) la llamada al proveedor pasa por `llamarModelo` (inyectable por petición, modo
+// replay); (2) la directiva de idioma llega resuelta (`directivaResuelta`); (3) la regla de plataforma llega resuelta
+// (`reglaDe`); (4) `runSocialLabDirect` se exporta; (5) los dos parámetros nuevos van al final de su firma.
+// SIGNCANON, CT-PLATFORM, VOICECONSTRAINTS y HASHTAGPOLICY son bloques PUROS que el carril también usa para lo suyo
+// (juez, firma, política retroactiva): allí siguen. Un cambio en uno que afecte a la adaptación se hace en los dos sitios.
+// Pruebas: `tests/adapt_test.mjs` (el endpoint) y `tests/nucleo_adaptador_test.mjs` (el adaptador, mudado del carril).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 /* eslint-disable */
-// @ts-nocheck — el texto es el del carril, tipado y probado allí; aquí se prueba por equivalencia (tests/adapt_test.mjs).
+// @ts-nocheck — el texto viene del carril, donde estaba tipado; aquí se prueba con tests/nucleo_adaptador_test.mjs.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 declare const process: { env: Record<string, string | undefined> };
@@ -2556,4 +2563,5 @@ export async function runSocialLabDirect(
   };
 }
 
-export { adaptTitleAndHook, masterPartOf, normalizeLanguageCode, CEILING_UNDECLARED, VOICE_CONSTRAINTS_ABSENT };
+export { adaptTitleAndHook, masterPartOf, normalizeLanguageCode, CEILING_UNDECLARED, VOICE_CONSTRAINTS_ABSENT,
+  titleAdapterParts, buildTitleAdapterUserMessage, TITLE_ADAPTER_MAX_TOKENS };
