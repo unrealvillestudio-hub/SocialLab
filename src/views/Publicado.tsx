@@ -3,6 +3,7 @@ import { ExternalLink, LayoutGrid, MessageCircle, RefreshCw, Radio, Square } fro
 import { ops, ErrorApi, type Marca, type RespPublicado, type EnVivo, type Publicada } from '../api';
 import { Aviso, Cargando, Chip, ChipPlataforma, ChevronAsesor, VistaPrevia, bordeDePlataforma, cn, etiquetaFormato, etiquetaPlataforma, fechaHora } from '../ui/components';
 import { PillsDePost, usePulso } from '../ui/Pulso';
+import { Maqueta, maquetaDe } from '../ui/Maqueta';
 
 /** Cada cuánto se vuelve a leer el registro y las métricas de SignalLab (sólo base: barato). */
 const REFRESCO_REGISTRO_MS = 60_000;
@@ -212,9 +213,22 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso, compacta = false }: {
   const oculta = compacta ? 'max-sm:hidden' : '';
   const enlace = vivo?.permalink ?? p.enlace ?? null;
   const imagen = vivo?.imagen ?? p.image_url ?? p.media_urls?.[0] ?? null;
+  const texto = vivo?.texto ?? p.copy_text ?? '';
+  // La tarjeta se dibuja como la publicación en su plataforma, si su plataforma tiene maqueta (Sam, 2026-10-27).
+  const conMaqueta = !!maquetaDe(p.platform, p.formato);
+  const [vista, setVista] = useState<string | null>(null);
+  const contador = (m: string) => vivo?.contadores.find((c) => c.metric === m)?.value ?? null;
   return (
     <article className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden flex flex-col" style={bordeDePlataforma(p.platform)}>
-      <Imagen src={imagen} />
+      {conMaqueta ? (
+        <>
+          <Maqueta platform={p.platform} formato={p.formato} datos={{
+            cuenta: nombre, imagenes: [...new Set([imagen, ...(p.media_urls ?? [])].filter((x): x is string => !!x))], texto,
+            fecha: fechaHora(p.published_at, huso), likes: contador('likes'), comentarios: contador('comments'), onImagen: setVista,
+          }} />
+          {vista && <VistaPrevia src={vista} onCerrar={() => setVista(null)} />}
+        </>
+      ) : <Imagen src={imagen} />}
       <div className={cn('space-y-2 flex-1 flex flex-col', compacta ? 'p-2 sm:p-3' : 'p-3')}>
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip className="text-zinc-200">{nombre}</Chip>
@@ -227,8 +241,9 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso, compacta = false }: {
             : vivo ? <Chip className="bg-emerald-500/10 text-emerald-300">en vivo</Chip>
             : leidoEnVivo ? <Chip className="bg-amber-500/10 text-amber-300" >no está en la lectura reciente</Chip> : null}
         </div>
-        <div className="text-[11px] text-zinc-500">{fechaHora(p.published_at, huso)}</div>
-        <p className={cn('texto-editorial text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1', oculta)}>{vivo?.texto ?? p.copy_text ?? ''}</p>
+        {!conMaqueta && <div className="text-[11px] text-zinc-500">{fechaHora(p.published_at, huso)}</div>}
+        {!conMaqueta && <p className={cn('texto-editorial text-xs text-zinc-300 line-clamp-3 whitespace-pre-line flex-1', oculta)}>{texto}</p>}
+        {conMaqueta && <div className="flex-1" />}
         <PillsDePost id={p.id} platformPostId={p.platform_post_id} metricas={p.metricas}
           sinMedir={p.via === 'manual' || p.via === 'externa' ? `sin lector de métricas (publicación ${p.via})` : 'sin medir'} />
         {/* Con id en la plataforma: sin él no hay comentarios que leer ni consejo que pedir. */}
@@ -243,17 +258,28 @@ function Tarjeta({ p, vivo, leidoEnVivo, nombre, huso, compacta = false }: {
 }
 
 function TarjetaVivo({ v, nombre, huso }: { v: EnVivo; nombre: string; huso: string | null }) {
+  const conMaqueta = !!maquetaDe(v.platform, v.formato);
+  const [vista, setVista] = useState<string | null>(null);
+  const contador = (m: string) => v.contadores.find((c) => c.metric === m)?.value ?? null;
   return (
     <article className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/20 overflow-hidden flex flex-col" style={bordeDePlataforma(v.platform)}>
-      <Imagen src={v.imagen} />
+      {conMaqueta ? (
+        <>
+          <Maqueta platform={v.platform} formato={v.formato} datos={{
+            cuenta: nombre, imagenes: v.imagen ? [v.imagen] : [], texto: v.texto, fecha: fechaHora(v.publicado_en, huso),
+            likes: contador('likes'), comentarios: contador('comments'), onImagen: setVista,
+          }} />
+          {vista && <VistaPrevia src={vista} onCerrar={() => setVista(null)} />}
+        </>
+      ) : <Imagen src={v.imagen} />}
       <div className="p-3 space-y-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip className="text-zinc-200">{nombre}</Chip>
           <ChipPlataforma platform={v.platform} />
           {v.formato && <Chip>{etiquetaFormato(v.formato)}</Chip>}
         </div>
-        <div className="text-[11px] text-zinc-500">{fechaHora(v.publicado_en, huso)}</div>
-        <p className="text-xs text-zinc-400 line-clamp-3 whitespace-pre-line">{v.texto ?? ''}</p>
+        {!conMaqueta && <div className="text-[11px] text-zinc-500">{fechaHora(v.publicado_en, huso)}</div>}
+        {!conMaqueta && <p className="text-xs text-zinc-400 line-clamp-3 whitespace-pre-line">{v.texto ?? ''}</p>}
         {v.permalink && <a href={v.permalink} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-mono text-accent hover:underline">Ver <ExternalLink className="w-3 h-3" /></a>}
       </div>
     </article>

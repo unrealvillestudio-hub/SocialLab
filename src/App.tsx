@@ -11,6 +11,7 @@ import Hoy from './views/Hoy';
 import { AvisoComentarios, ProveedorPulso, usePulso, type FocoAsesor } from './ui/Pulso';
 import Acciones from './views/Acciones';
 import { tramosDeCaja } from './logotipo';
+import { registrarMaquetas } from './ui/Maqueta';
 
 type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'mensajes' | 'acciones' | 'estadisticas' | 'calendario';
 /** `corta`: la etiqueta de la barra inferior del teléfono, donde caben siete pestañas. */
@@ -94,7 +95,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
   useEffect(() => {
     ops<Catalogo>(sesion.session_token, 'catalogo')
       // Los colores de plataforma se registran antes de pintar: todas las pestañas los leen.
-      .then((c) => { registrarColoresDePlataforma(c.plataformas); setCatalogo(c); })
+      .then((c) => { registrarColoresDePlataforma(c.plataformas); registrarMaquetas(c.maquetas); setCatalogo(c); })
       .catch((e) => { if (e instanceof ErrorApi && e.status === 401) onSalir(); else setError(e.message); });
   }, [sesion.session_token]);
 
