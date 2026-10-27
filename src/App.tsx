@@ -14,6 +14,9 @@ import { tramosDeCaja } from './logotipo';
 import { registrarMaquetas, registrarPerfiles } from './ui/Maqueta';
 import { EstrategiaDeLaSemana } from './ui/Objetivos';
 
+/** Cada cuánto se relee el catálogo (marcas, colores, maquetas y perfiles de cuenta). */
+const CATALOGO_RELECTURA_MS = 5 * 60_000;
+
 type Pestana = 'hoy' | 'publicado' | 'comentarios' | 'mensajes' | 'acciones' | 'estadisticas' | 'calendario';
 /** `corta`: la etiqueta de la barra inferior del teléfono, donde caben siete pestañas. */
 const PESTANAS: { id: Pestana; etiqueta: string; corta?: string; icono: React.ElementType }[] = [
@@ -93,11 +96,21 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
   const abrirAsesor = useCallback((foco: FocoAsesor) => { setFocoAsesor(foco); setPestana('acciones'); }, []);
   const irA = (id: Pestana) => { setPestana(id); if (id === 'comentarios') setPostComentarios(null); if (id === 'acciones') setFocoAsesor(null); };
 
+  // El catálogo se relee cada CATALOGO_RELECTURA_MS y al volver a la pestaña (2026-10-27): lo que cambia en el dato —un
+  // perfil de cuenta que SignalLab lee una vez al día, una maqueta, un color— llega sin recargar la página. Antes se leía
+  // sólo al entrar, y una pestaña abierta antes de que SignalLab escribiera los perfiles seguía dibujando la inicial.
   useEffect(() => {
-    ops<Catalogo>(sesion.session_token, 'catalogo')
+    let vivo = true;
+    const leer = (primera: boolean) => ops<Catalogo>(sesion.session_token, 'catalogo')
       // Los colores de plataforma se registran antes de pintar: todas las pestañas los leen.
-      .then((c) => { registrarColoresDePlataforma(c.plataformas); registrarMaquetas(c.maquetas); registrarPerfiles(c.perfiles); setCatalogo(c); })
-      .catch((e) => { if (e instanceof ErrorApi && e.status === 401) onSalir(); else setError(e.message); });
+      .then((c) => { if (!vivo) return; registrarColoresDePlataforma(c.plataformas); registrarMaquetas(c.maquetas); registrarPerfiles(c.perfiles); setCatalogo(c); })
+      // Una relectura que falla deja el catálogo que había; sólo la primera muestra el error.
+      .catch((e) => { if (!vivo) return; if (e instanceof ErrorApi && e.status === 401) onSalir(); else if (primera) setError(e.message); });
+    leer(true);
+    const t = setInterval(() => leer(false), CATALOGO_RELECTURA_MS);
+    const alVolver = () => { if (document.visibilityState === 'visible') leer(false); };
+    document.addEventListener('visibilitychange', alVolver);
+    return () => { vivo = false; clearInterval(t); document.removeEventListener('visibilitychange', alVolver); };
   }, [sesion.session_token]);
 
   return (
