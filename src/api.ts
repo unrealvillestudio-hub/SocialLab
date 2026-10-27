@@ -220,6 +220,8 @@ export interface Recomendacion {
   status: 'nueva' | 'seguida' | 'descartada' | 'caducada'; status_by: string | null; status_at: string | null;
   sent_text: string | null; created_at: string;
   accion: { label: string; via: 'api' | 'app_nativa' | 'interna' };
+  /** El objetivo semanal activo al que apunta, si apunta a alguno (Sam, 2026-10-27). */
+  growth_goal_id?: string | null;
 }
 /** Cómo va el último pedido de consejo sobre un comentario (sin nada del despertar: ni costo ni modelo). */
 export interface PedidoConsejo { post_comment_id: number; estado: 'pendiente' | 'sin_consejo' | 'con_consejo' }
@@ -326,4 +328,44 @@ export interface RespMejorHora {
   disponible: boolean; motivo: string | null;
   config?: { edad_minutos: number; banda_horas: number; minimo_por_franja: number; ventana_dias: number };
   cuentas: MejorHoraCuenta[];
+}
+
+// ── OBJETIVOS SEMANALES (`/api/objetivos`, Sam, 2026-10-27) ────────────────────────────────────────
+
+export type EstadoObjetivo = 'propuesta' | 'activa' | 'descartada' | 'cerrada';
+export type ResultadoObjetivo = 'logrado' | 'parcial' | 'no_logrado' | 'sin_datos';
+export interface Objetivo {
+  id: string; brand_id: string; week_start: string; objective: string; platform: string | null; metric: string | null;
+  measure: 'nivel' | 'suma' | null; baseline_value: number | null; target_value: number | null; rationale: string | null;
+  status: EstadoObjetivo; decided_by: string | null; decided_at: string | null; outcome: ResultadoObjetivo | null;
+  achieved_value: number | null; review_missing: string | null; review_correction: string | null;
+  /** Lo que lleva (o lo que logró, si está cerrado) y su avance 0–1, medidos por SignalLab. */
+  current_value: number | null; progress: number | null; created_at: string;
+}
+export interface SemanaDeObjetivos { brand_id: string; semana: string; objetivos: Objetivo[]; revision: Objetivo[] }
+export interface RespObjetivos { disponible: boolean; motivo: string | null; semanas: SemanaDeObjetivos[]; pedidos: string[] }
+
+export async function objetivos(token: string, params: Record<string, string | undefined> = {}): Promise<RespObjetivos> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  return leer<RespObjetivos>(await fetch(`/api/objetivos?${qs}`, { headers: { Authorization: `Bearer ${token}` } }));
+}
+
+/** Aprobar (quizá editado), descartar o editar un objetivo. */
+export async function decidirObjetivo(token: string, id: string, accion: 'aprobar' | 'descartar' | 'editar',
+  cambios: { objective?: string; target_value?: number | null } = {}): Promise<{ objetivo: Objetivo }> {
+  return leer(await fetch('/api/objetivos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id, accion, ...cambios }),
+  }));
+}
+
+/** Pide al asesor una propuesta nueva para la semana de esa marca. 409 = ya hay un pedido en cola. */
+export async function pedirObjetivos(token: string, marca: string): Promise<unknown> {
+  return leer(await fetch('/api/objetivos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ tipo: 'pedir', marca }),
+  }));
 }
