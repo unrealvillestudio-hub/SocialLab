@@ -3,7 +3,8 @@ import { Check, Copy, ExternalLink, Lock, RefreshCw, Send, X } from 'lucide-reac
 import { ops, responderComentario, comentarEnPublicacion, ErrorApi, type Marca, type Publicada, type Recomendacion, type RespPublicado, type Tarjeta } from '../api';
 import { claveDeCuenta } from '../asesor';
 import { usePulso, PillsDePost, type FocoAsesor } from '../ui/Pulso';
-import { Aviso, Chip, ChipPlataforma, Miniatura, bordeDePlataforma, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
+import { Aviso, Chip, ChipPlataforma, Miniatura, VistaPrevia, bordeDePlataforma, cn, etiquetaPlataforma, fechaHora, ChevronAsesor } from '../ui/components';
+import { Maqueta, maquetaDe } from '../ui/Maqueta';
 
 /**
  * ACCIONES · el asesor (Fase 4; tarjetas de SignalLab, `intel.signal_cards`). Sam, 2026-10-25: «un community
@@ -145,9 +146,20 @@ function Publicacion({ p, id, nombre, huso, t }: {
     catch (e) { setAviso({ ok: false, texto: e instanceof ErrorApi ? e.message : String(e) }); }
     finally { setPidiendo(false); }
   };
+  // La publicación se dibuja como en su plataforma, si su plataforma tiene maqueta (Sam, 2026-10-27).
+  const conMaqueta = !!p && !!maquetaDe(p.platform, p.formato);
+  const [vista, setVista] = useState<string | null>(null);
   return (
-    <div className="flex gap-3">
-      {img ? <Miniatura src={img} className="w-16 h-16 rounded-lg object-cover bg-zinc-800" />
+    <div className={cn('flex gap-3', conMaqueta && 'flex-col sm:flex-row')}>
+      {conMaqueta && p ? (
+        <div className="w-full sm:w-64 shrink-0 rounded-lg border border-zinc-800 overflow-hidden">
+          <Maqueta platform={p.platform} formato={p.formato} datos={{
+            cuenta: nombre(t.brand_id), imagenes: [...new Set([p.image_url, ...(p.media_urls ?? [])].filter((x): x is string => !!x))],
+            texto: p.copy_text, fecha: fechaHora(p.published_at, huso(t.brand_id)), onImagen: setVista,
+          }} />
+          {vista && <VistaPrevia src={vista} onCerrar={() => setVista(null)} />}
+        </div>
+      ) : img ? <Miniatura src={img} className="w-16 h-16 rounded-lg object-cover bg-zinc-800" />
         : <div className="w-16 h-16 shrink-0 rounded-lg bg-zinc-800" />}
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -155,7 +167,7 @@ function Publicacion({ p, id, nombre, huso, t }: {
           <ChipPlataforma platform={t.platform ?? p?.platform ?? ''} />
           {p && <span className="text-[10px] text-zinc-500">{fechaHora(p.published_at, huso(t.brand_id))}</span>}
         </div>
-        {p ? <p className="texto-editorial text-xs text-zinc-300 line-clamp-2">{p.copy_text ?? ''}</p>
+        {p ? (!conMaqueta && <p className="texto-editorial text-xs text-zinc-300 line-clamp-2">{p.copy_text ?? ''}</p>)
           : <p className="text-[10px] text-zinc-600">publicación {id} (fuera de los últimos 30 días)</p>}
         {p && <PillsDePost id={p.id} platformPostId={p.platform_post_id} metricas={p.metricas} />}
         {p && (

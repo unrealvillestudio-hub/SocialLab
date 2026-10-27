@@ -79,8 +79,22 @@ async function coloresDePlataforma(): Promise<{ platform: string; color: string 
   }
 }
 
+/**
+ * La maqueta con que el tablero dibuja cada plataforma y formato (`intel.platform_previews`, Sam 2026-10-27). Antes de la
+ * migración la tabla no existe: las tarjetas se ven sin maqueta, el tablero no deja de cargar.
+ */
+async function maquetasDePlataforma(): Promise<{ platform: string; media_format: string | null; layout: string; aspect: string }[]> {
+  try {
+    return await sbGet<{ platform: string; media_format: string | null; layout: string; aspect: string }>(
+      'platform_previews?select=platform,media_format,layout,aspect&active=is.true', 'intel');
+  } catch (err) {
+    console.error(`[ops] maquetas de plataforma sin leer: ${err instanceof Error ? err.message : err}`);
+    return [];
+  }
+}
+
 async function catalogo(alcance: Alcance) {
-  const [cuentas, plataformas] = await Promise.all([cuentasDe(alcance), coloresDePlataforma()]);
+  const [cuentas, plataformas, maquetas] = await Promise.all([cuentasDe(alcance), coloresDePlataforma(), maquetasDePlataforma()]);
   const ids = alcance === TODAS ? [...new Set(cuentas.map((c) => c.brand_id))] : alcance;
   const marcas = ids.length
     ? await sbGet<{ id: string; display_name: string | null; publish_timezone: string | null }>(
@@ -101,6 +115,7 @@ async function catalogo(alcance: Alcance) {
     })).sort((a, b) => a.nombre.localeCompare(b.nombre)),
     alcance_total: alcance === TODAS,
     plataformas,
+    maquetas,
   };
 }
 
