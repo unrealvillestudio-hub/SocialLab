@@ -48,6 +48,38 @@ export function verificarSesion(token: unknown, secreto: string, ahora = Math.fl
   }
 }
 
+// ── Agentes del ecosistema (Ayra, Sam 2026-10-27) ─────────────────────────────
+//
+// Una agente no es una operadora de una marca: tiene su identidad en `ayra` (unrlvl-iid-functions) y entra con una
+// credencial que guarda Vault. SocialLab le firma su propia sesión (mismo secreto y forma que la de los operadores) con
+// el rol `ROL_AGENTE`. Su alcance no sale de `operator_review_scope`: sale de `intel.agente_alcance`, con una capacidad
+// por tipo de petición: leer para mirar (GET), actuar para todo lo que escribe.
+
+export const ROL_AGENTE = 'agente';
+/** Horas que dura la sesión de una agente: lo mismo que la de un operador (`iid-inbound`, 8 h). */
+export const HORAS_SESION_AGENTE = 8;
+
+const b64urlDe = (b: Buffer | string) => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+/** Firma una sesión HS256 `{sub, role, brand_scope, iat, exp}`: la misma forma que verifica `verificarSesion`. */
+export function firmarSesion(sesion: Sesion, secreto: string, ahora = Math.floor(Date.now() / 1000), horas = HORAS_SESION_AGENTE): string {
+  if (!secreto) throw new Error('SESSION_SECRET_MISSING');
+  const h = b64urlDe(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const p = b64urlDe(JSON.stringify({ ...sesion, iat: ahora, exp: ahora + horas * 3600 }));
+  return `${h}.${p}.${b64urlDe(createHmac('sha256', secreto).update(`${h}.${p}`).digest())}`;
+}
+
+/** La capacidad que pide una petición: mirar es leer; lo demás escribe y es actuar. */
+export const capacidadDe = (metodo: string | undefined): 'leer' | 'actuar' =>
+  (String(metodo ?? 'GET').toUpperCase() === 'GET' ? 'leer' : 'actuar');
+
+/** El alcance de una agente a partir de `intel.agente_alcance`: `{*}` son todas; vacío, ninguna (null). */
+export function alcanceDeAgente(marcas: readonly string[] | null | undefined): Alcance | null {
+  const xs = [...new Set((marcas ?? []).map((m) => String(m).trim()).filter(Boolean))];
+  if (xs.includes(TODAS)) return TODAS;
+  return xs.length ? xs : null;
+}
+
 // ── Alcance ───────────────────────────────────────────────────────────────────
 
 /** La vista del tablero en `intel.operator_review_scope.views`. Vocabulario del sistema, no de una marca. */
