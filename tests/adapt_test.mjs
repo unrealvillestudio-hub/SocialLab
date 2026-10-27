@@ -1,8 +1,9 @@
 /**
  * Fase 6 (2026-10-26) — POST /api/adapt: la adaptación del carril como endpoint de SocialLab.
  *
- *   1 · autenticación: sin el service_role del proyecto, 401; modo desconocido, 400.
- *   2 · el modelo es el de ops_lab_models (sociallab/sync): otro, 409.
+ *   1 · autenticación: la clave de quien llama se prueba contra la base (lee ops_lab_models, que sólo lee el service_role);
+ *       401/403 de la base → 401; sin Bearer, 401 sin llamar a nadie; modo desconocido, 400.
+ *   2 · el modelo es el de ops_lab_models (sociallab/sync), leído con esa misma clave: otro, 409.
  *   3 · replay: no se llama a nadie; devuelve las peticiones que se habrían hecho, en orden, y el resultado.
  *   4 · el adaptador: la firma no entra al modelo, la regla de plataforma llega resuelta, un canal que no adapta no llama,
  *       el truncado se reintenta y, si vuelve a cortar, sale el texto de entrada declarado como degradado.
@@ -14,7 +15,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 process.env.SUPABASE_URL = 'https://sb.prueba';
-process.env.SUPABASE_SERVICE_ROLE_KEY = 'clave-de-prueba';
 process.env.ANTHROPIC_API_KEY = 'ant-de-prueba';
 
 let modeloEnBase = 'modelo-del-dato';
@@ -22,7 +22,10 @@ const peticionesDb = [];
 globalThis.fetch = async (url, init) => {
   const u = String(url);
   if (u.startsWith('https://sb.prueba/rest/v1/')) {
-    peticionesDb.push({ url: u, method: init?.method ?? 'GET' });
+    peticionesDb.push({ url: u, method: init?.method ?? 'GET', headers: init?.headers ?? {} });
+    const apikey = init?.headers?.apikey;
+    if (apikey === 'clave-autenticada') return { ok: false, status: 403, json: async () => ({}), text: async () => '{}' };
+    if (apikey !== 'clave-de-prueba') return { ok: false, status: 401, json: async () => ({}), text: async () => '{}' };
     const filas = modeloEnBase ? [{ model_id: modeloEnBase }] : [];
     return { ok: true, status: 200, json: async () => filas, text: async () => JSON.stringify(filas) };
   }
@@ -64,10 +67,20 @@ const base = (extra = {}) => ({ builder_input: {
   plataformas: ['canal_a'], reglas: REGLAS, directiva: DIR, idioma: 'es', firma: '— La Firma', ...extra } });
 const ok = (texto, stop = 'end_turn') => ({ status: 200, body: { content: [{ text: texto }], usage: { input_tokens: 100, output_tokens: 20 }, stop_reason: stop } });
 
-await test('1 · sin el service_role, 401; modo desconocido, 400', async () => {
+await test('1 · la clave se prueba contra la base: 401/403 → 401; sin Bearer no llama; modo desconocido, 400', async () => {
   assert.equal((await llamar(base(), 'Bearer otra')).code, 401);
+  assert.equal((await llamar(base(), 'Bearer clave-autenticada')).code, 401);
+  const antes = peticionesDb.length;
   assert.equal((await llamar(base(), '')).code, 401);
+  assert.equal((await llamar(base(), 'clave-de-prueba')).code, 401);
+  assert.equal(peticionesDb.length, antes, 'sin Bearer no debe consultar la base');
   assert.equal((await llamar({ builder_input: { modo: 'otro' } })).code, 400);
+  const ultima = peticionesDb[peticionesDb.length - 1];
+  assert.deepEqual(Object.keys(ultima.headers), ['apikey'], 'una clave que no es JWT va sólo en apikey');
+  await llamar(base(), 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.firma');
+  const jwt = peticionesDb[peticionesDb.length - 1].headers;
+  assert.equal(jwt.Authorization, 'Bearer ' + jwt.apikey, 'un JWT va también en Authorization');
+  assert.ok(!/SUPABASE_SERVICE_ROLE_KEY/.test(readFileSync(new URL('../api/adapt.ts', import.meta.url), 'utf8')), 'no depende de una copia local de la clave');
 });
 
 await test('2 · el modelo es el de ops_lab_models: otro, 409', async () => {

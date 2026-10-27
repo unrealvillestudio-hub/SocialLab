@@ -15,8 +15,11 @@
  * nombres propios, regla de cada plataforma y modelo. Aquí no se consulta ninguna tabla de marca. El modelo se contrasta con
  * `public.ops_lab_models` (`sociallab` / `sync`): quien llama no puede elegir otro.
  *
- * Autenticación: `Authorization: Bearer <service_role>` del mismo proyecto, comparado en tiempo constante. Nada de esto nombra
- * una marca ni una plataforma.
+ * Autenticación (2026-10-27): `Authorization: Bearer <service_role>` del mismo proyecto. La clave NO se compara con una copia
+ * local —la del carril y la de Vercel pueden tener formatos distintos (JWT o `sb_secret_…`) y dieron 401 en las tres primeras
+ * sombras—: se le pregunta a la base. Con esa clave se lee `ops_lab_models`, que sólo el `service_role` puede leer (sin
+ * permiso para `anon` ni `authenticated`): si devuelve la fila, quien llama es el `service_role`, y esa misma lectura da el
+ * modelo vigente. Nada de esto nombra una marca ni una plataforma.
  */
 import { runSocialLabDirect, adaptTitleAndHook, conLlamador } from './_adaptCore.js';
 
@@ -24,36 +27,28 @@ declare const process: { env: Record<string, string | undefined> };
 
 const MODELO_LAB = 'sociallab';
 const MODELO_ROL = 'sync';
-const MODELO_TTL_MS = 60_000;
-let modeloGuardado: { modelo: string; hasta: number } | null = null;
+export class NoAutorizado extends Error {}
+export class EntradaInvalida extends Error {}
 
-/** Lectura directa de PostgREST con el service_role. Una sola tabla, sólo lectura. */
-async function sbGet<T>(ruta: string): Promise<T[]> {
-  const url = process.env.SUPABASE_URL ?? '', clave = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
-  const res = await fetch(`${url}/rest/v1/${ruta}`, { headers: { apikey: clave, Authorization: `Bearer ${clave}` } });
-  if (!res.ok) throw new Error(`MODELO_ILEGIBLE: ${ruta.split('?')[0]} HTTP ${res.status}`);
+/**
+ * Autoriza y resuelve el modelo en una sola lectura, CON LA CLAVE DE QUIEN LLAMA. Va siempre en `apikey`; en `Authorization`
+ * sólo si es un JWT (la clave `sb_secret_…` no es un JWT y ahí la pasarela la rechaza). 401/403 → `NoAutorizado`; 200 con una
+ * sola fila activa → el modelo.
+ */
+export async function modeloParaQuienLlama(clave: string): Promise<string> {
+  const url = process.env.SUPABASE_URL ?? '';
+  if (!url) throw new Error('MODELO_ILEGIBLE: falta SUPABASE_URL');
+  const res = await fetch(
+    `${url}/rest/v1/ops_lab_models?select=model_id&lab=eq.${MODELO_LAB}&role=eq.${MODELO_ROL}&active=is.true&limit=2`,
+    { headers: /^eyJ[\w-]*\.[\w-]+\.[\w-]+$/.test(clave) ? { apikey: clave, Authorization: `Bearer ${clave}` } : { apikey: clave } });
+  if (res.status === 401 || res.status === 403) throw new NoAutorizado();
+  if (!res.ok) throw new Error(`MODELO_ILEGIBLE: ops_lab_models HTTP ${res.status}`);
   const d = await res.json();
-  return Array.isArray(d) ? d as T[] : [];
-}
-
-async function modeloVigente(): Promise<string> {
-  if (modeloGuardado && modeloGuardado.hasta > Date.now()) return modeloGuardado.modelo;
-  const filas = await sbGet<{ model_id: string }>(
-    `ops_lab_models?select=model_id&lab=eq.${MODELO_LAB}&role=eq.${MODELO_ROL}&active=is.true&limit=2`);
+  const filas: Array<{ model_id?: string }> = Array.isArray(d) ? d : [];
   const modelo = filas.length === 1 ? String(filas[0].model_id ?? '').trim() : '';
   if (!modelo) throw new Error(`MODELO_SIN_DATO: ops_lab_models no tiene una fila activa para ${MODELO_LAB}/${MODELO_ROL} (${filas.length})`);
-  modeloGuardado = { modelo, hasta: Date.now() + MODELO_TTL_MS };
   return modelo;
 }
-
-export function igualEnTiempoConstante(a: string, b: string): boolean {
-  if (!a || !b || a.length !== b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d === 0;
-}
-
-export class EntradaInvalida extends Error {}
 
 const lista = (v: unknown, campo: string): string[] => {
   if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) throw new EntradaInvalida(`${campo}: se esperaba una lista de textos`);
@@ -128,9 +123,9 @@ export async function titulo(bi: Record<string, any>, modelo: string) {
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'método no admitido' });
-  const clave = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
   const auth = String(req.headers?.authorization ?? '');
-  if (!clave || !igualEnTiempoConstante(auth, `Bearer ${clave}`)) return res.status(401).json({ error: 'no autorizado' });
+  const clave = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  if (!clave) return res.status(401).json({ error: 'no autorizado' });
 
   let body: any = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { return res.status(400).json({ error: 'JSON inválido' }); } }
@@ -140,7 +135,7 @@ export default async function handler(req: any, res: any) {
   if (modo !== 'adaptar' && modo !== 'titulo') return res.status(400).json({ error: `modo desconocido: ${String(modo)}` });
 
   try {
-    const vigente = await modeloVigente();
+    const vigente = await modeloParaQuienLlama(clave);
     const pedido = typeof bi.modelo === 'string' ? bi.modelo.trim() : '';
     if (pedido !== vigente) {
       return res.status(409).json({ error: `MODELO_DISTINTO: el carril pide '${pedido || '(vacío)'}' y ops_lab_models ${MODELO_LAB}/${MODELO_ROL} dice '${vigente}'` });
@@ -154,6 +149,7 @@ export default async function handler(req: any, res: any) {
     const resultado = await correr();
     return res.status(200).json({ ok: true, modo, modelo: vigente, resultado });
   } catch (err) {
+    if (err instanceof NoAutorizado) return res.status(401).json({ error: 'no autorizado' });
     const msg = err instanceof Error ? err.message : String(err);
     const status = err instanceof EntradaInvalida ? 400 : /^ADAPT_LANGUAGE_DIRECTIVE_MISSING|^MODELO_SIN_DATO|^REGLA_DE_PLATAFORMA_SIN_DATO|^REPLAY_AGOTADO/.test(msg) ? 422 : 500;
     return res.status(status).json({ error: msg.slice(0, 600) });
