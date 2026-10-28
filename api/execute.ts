@@ -7,12 +7,83 @@
 
 declare const process: { env: Record<string, string | undefined> };
 
-const CLAUDE_MODEL = 'claude-sonnet-5';
+// MODELO-DATO (2026-10-25) — el modelo NO vive aquí: es la fila activa de `public.ops_lab_models` para
+// lab `sociallab`, rol `sync` (la adaptación del texto que se publica). Sin fila, la petición falla con
+// `MODELO_SIN_DATO`: no hay un modelo de respaldo escrito, que sería la constante de antes con otro nombre.
+const MODELO_LAB = 'sociallab';
+const MODELO_ROL = 'sync';
 // Env vars: prefijo VITE_ no existe en runtime Vercel serverless (es build-time
 // del cliente Vite). Usamos las vars estándar de server.
 const SB_URL  = () => process.env.SUPABASE_URL ?? '';
 const SB_KEY  = () => process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const ANT_KEY = () => process.env.ANTHROPIC_API_KEY ?? '';
+const KEY_LABEL = () => process.env.ANTHROPIC_KEY_LABEL ?? null;
+
+// COSTO (2026-10-28) — Sam: «sí instrumenta». Hasta hoy esta ruta llamaba al proveedor sin dejar asiento: su
+// gasto no existía en `ops_generation_ledger` ni, por lo tanto, en unrlvl-ops. Ahora cada llamada se asienta por
+// `ops_log_generation`, con la tarifa resuelta por `ops_resolve_rate` (dato, nunca un literal), igual que el
+// asesor. Sin `usage` o sin tarifa, el asiento lleva ceros y su motivo en `rate_source`: nunca una estimación.
+// Asentar no bloquea la publicación: si el asiento falla, se registra en el log del servidor y se sigue.
+const SOURCE_APP  = 'sociallab';
+const OUTPUT_TYPE = 'adaptation';
+
+/** Costo en USD de una llamada, o null si falta alguna tarifa. Puro. */
+export function costoDe(inTok: number, outTok: number, rIn: number | null, rOut: number | null): number | null {
+  if (rIn === null || rOut === null) return null;
+  return Math.round((inTok / 1e6 * rIn + outTok / 1e6 * rOut) * 1e6) / 1e6;
+}
+
+/** De dónde sale el costo asentado. Puro: es lo que el tablero lee para separar ceros afirmados de inciertos. */
+export function fuenteDeTarifa(httpStatus: number, usageReportado: boolean, rIn: { id: string } | null, rOut: { id: string } | null): string {
+  if (httpStatus < 200 || httpStatus >= 300) return `NOT_BILLED:PROVIDER_HTTP_${httpStatus}`;
+  if (!usageReportado) return 'USAGE_UNREPORTED';
+  return rIn && rOut ? `ops_lab_rates:${rIn.id}+${rOut.id}` : 'UNSEEDED';
+}
+
+async function rpc(fn: string, args: object): Promise<any> {
+  const res = await fetch(`${SB_URL()}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { apikey: SB_KEY(), Authorization: `Bearer ${SB_KEY()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) throw new Error(`${fn}: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+  const t = await res.text();
+  return t ? JSON.parse(t) : null;
+}
+
+async function tarifa(modelo: string, unitType: string, at: string): Promise<{ rate: number; id: string; from: string } | null> {
+  try {
+    const r = await rpc('ops_resolve_rate', { p_lab: MODELO_LAB, p_model_id: modelo, p_unit_type: unitType, p_at: at });
+    const row = Array.isArray(r) ? r[0] : r;
+    return row?.rate_usd != null ? { rate: Number(row.rate_usd), id: String(row.rate_id), from: String(row.effective_from) } : null;
+  } catch (e) { console.error(`[execute] ops_resolve_rate: ${e}`); return null; }
+}
+
+/** Asienta UNA llamada al proveedor. Nunca lanza: un asiento que falla no tumba la publicación. */
+async function asentar(a: {
+  brandId: string; platform: string; modelo: string; httpStatus: number; usage: any; durationMs: number; error: string | null;
+}): Promise<void> {
+  try {
+    const inTok  = Number(a.usage?.input_tokens)  || 0;
+    const outTok = Number(a.usage?.output_tokens) || 0;
+    const usageReportado = Number.isFinite(a.usage?.input_tokens) && Number.isFinite(a.usage?.output_tokens);
+    const ok = a.httpStatus >= 200 && a.httpStatus < 300;
+    const at = new Date().toISOString().slice(0, 10);
+    const [rIn, rOut] = ok && usageReportado
+      ? await Promise.all([tarifa(a.modelo, 'tokens_in', at), tarifa(a.modelo, 'tokens_out', at)])
+      : [null, null];
+    const costo = ok && usageReportado ? costoDe(inTok, outTok, rIn?.rate ?? null, rOut?.rate ?? null) : 0;
+    await rpc('ops_log_generation', {
+      p_lab: MODELO_LAB, p_brand_id: a.brandId, p_job_id: null, p_piece_id: null, p_output_type: OUTPUT_TYPE,
+      p_platform: a.platform.toLowerCase(), p_provider: 'anthropic', p_model_id: a.modelo, p_unit_type: 'tokens_in',
+      p_input_units: inTok, p_output_units: outTok, p_cost_usd: costo, p_content_score: null,
+      p_status: ok ? 'ok' : 'error', p_duration_ms: a.durationMs, p_error_msg: a.error,
+      p_agent_name: null, p_domain: null, p_rate_in: rIn?.rate ?? null, p_rate_out: rOut?.rate ?? null,
+      p_rate_source: fuenteDeTarifa(a.httpStatus, usageReportado, rIn, rOut), p_rate_effective_at: rIn?.from ?? null,
+      p_voice_id: null, p_source_app: SOURCE_APP, p_api_key_ref: KEY_LABEL(), p_billable: null,
+    });
+  } catch (e) { console.error(`[execute] ops_log_generation: ${e}`); }
+}
 
 interface ExecuteRequest {
   brandId: string | null;
@@ -48,6 +119,18 @@ async function sb<T>(path: string): Promise<T | null> {
   } catch { return null; }
 }
 
+async function modeloDeLab(): Promise<string> {
+  const res = await fetch(
+    `${SB_URL()}/rest/v1/ops_lab_models?select=model_id&lab=eq.${MODELO_LAB}&role=eq.${MODELO_ROL}&active=is.true&limit=2`,
+    { headers: { apikey: SB_KEY(), Authorization: `Bearer ${SB_KEY()}` } },
+  );
+  if (!res.ok) throw new Error(`MODELO_ILEGIBLE: ops_lab_models ${MODELO_LAB}/${MODELO_ROL} — HTTP ${res.status}`);
+  const filas = (await res.json()) as Array<{ model_id?: string }>;
+  const modelo = filas.length === 1 ? String(filas[0].model_id ?? '').trim() : '';
+  if (!modelo) throw new Error(`MODELO_SIN_DATO: ops_lab_models no tiene una fila activa para ${MODELO_LAB}/${MODELO_ROL} (${filas.length})`);
+  return modelo;
+}
+
 async function sbInsert(table: string, data: object): Promise<{ id?: string; error?: string }> {
   try {
     const res = await fetch(`${SB_URL()}/rest/v1/${table}`, {
@@ -71,7 +154,8 @@ async function sbInsert(table: string, data: object): Promise<{ id?: string; err
 async function adaptForPlatform(
   rawCopy: string,
   platform: string,
-  brandId: string
+  brandId: string,
+  modelo: string,
 ): Promise<string> {
   const brand = await sb<any>(`brands?id=eq.${brandId}&select=name,language_primary`);
   const idioma = brand?.language_primary ?? 'es-ES';
@@ -87,6 +171,7 @@ async function adaptForPlatform(
 
   const rule = platformRules[platform.toUpperCase()] ?? platformRules.INSTAGRAM;
 
+  const t0 = Date.now();
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -95,7 +180,7 @@ async function adaptForPlatform(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL,
+      model: modelo,
       max_tokens: 600,
       // Sonnet 5 rechaza temperature/top_p/top_k con 400 → se elimina.
       // Sonnet 5 corre adaptive thinking si se omite `thinking`; con
@@ -113,8 +198,12 @@ Solo devuelve el copy adaptado. Sin explicaciones.`,
     }),
   });
 
+  const data = await res.json().catch(() => ({} as any));
+  await asentar({
+    brandId, platform, modelo, httpStatus: res.status, usage: data?.usage, durationMs: Date.now() - t0,
+    error: res.ok ? null : String(data?.error?.message ?? `HTTP ${res.status}`).slice(0, 300),
+  });
   if (!res.ok) return rawCopy;
-  const data = await res.json();
   return data.content?.[0]?.text ?? rawCopy;
 }
 
@@ -164,9 +253,11 @@ export default async function handler(req: any, res: any) {
     ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
   try {
+    // Una sola lectura por petición: todas las plataformas se adaptan con el mismo modelo.
+    const modelo = await modeloDeLab();
     const results = await Promise.all(
       platforms.map(async (platform) => {
-        const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!);
+        const adaptedCopy = await adaptForPlatform(rawCopy, platform, body.brandId!, modelo);
 
         const { id, error } = await sbInsert('scheduled_posts', {
           brand_id:                 body.brandId!,

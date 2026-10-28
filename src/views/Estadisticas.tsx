@@ -1,0 +1,382 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Clock, ExternalLink, Lock, Users } from 'lucide-react';
+import { ops, type Estadistica, type Marca, type RespEstadisticas, type ResumenCuenta, type MejorHoraCuenta, type RespMejorHora } from '../api';
+import { PillAsesorDeCuenta } from '../ui/Pulso';
+import { Aviso, Cargando, Chip, ChipPlataforma, bordeDePlataforma, cn, etiquetaFormato, fechaHora } from '../ui/components';
+
+/**
+ * ESTADÍSTICAS · una tarjeta por marca y plataforma, al estilo del panel profesional de la plataforma
+ * (pedido de Sam, 2026-10-25). Dos fuentes de SignalLab: lo medido POR PUBLICACIÓN y lo medido de la
+ * CUENTA (`content.account_metric_daily`: seguidores, alcance diario, visitas al perfil, desgloses).
+ * Lo que la plataforma todavía no da sale como meta («se desbloquea con N seguidores»), nunca como cero.
+ *
+ * LECTURA DE LAS BARRAS (Sam, 2026-10-26): en una comparación cada fila lleva su propio tono (de la misma familia,
+ * distinguibles entre sí) y su cifra; en una serie diaria cada barra se toca y dice su fecha y su valor, y con pocas
+ * barras la cifra va encima. Una serie que es un total acumulado (`aggregation = last` en el catálogo) muestra su
+ * último valor, nunca la suma de los días.
+ */
+
+const RANGOS = [7, 30, 90] as const;
+const DIA = 86_400_000;
+const etiquetaMetrica = (m: string) => m.replace(/_/g, ' ');
+const numero = (n: number) => (Number.isInteger(n) ? n : Math.round(n * 10) / 10).toLocaleString('en-US');
+
+/** Tonos de la familia del cian de la marca, ordenados para que dos filas vecinas se distingan bien. */
+const TONOS = ['#00FFD1', '#0EA5E9', '#14B8A6', '#A5F3FC', '#0F766E', '#38BDF8', '#5EEAD4', '#155E75'];
+const tono = (i: number) => TONOS[i % TONOS.length];
+
+/** Barras comparadas: una fila por valor, cada una con su tono, su cifra y su porcentaje del total. */
+function BarrasComparadas({ filas, porcentaje = true }: { filas: { etiqueta: string; valor: number }[]; porcentaje?: boolean }) {
+  const total = filas.reduce((x, f) => x + f.valor, 0) || 1;
+  const max = Math.max(1, ...filas.map((f) => f.valor));
+  return (
+    <div className="space-y-1">
+      {filas.map((f, i) => (
+        <div key={f.etiqueta} className="flex items-center gap-2 text-[11px]">
+          <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: tono(i) }} aria-hidden />
+          <span className="w-20 sm:w-28 truncate text-zinc-300">{f.etiqueta}</span>
+          <div className="flex-1 h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: `${((porcentaje ? f.valor / total : f.valor / max)) * 100}%`, backgroundColor: tono(i) }} />
+          </div>
+          <span className="w-20 text-right text-zinc-200 tabular-nums">{numero(f.valor)}{porcentaje && <span className="text-zinc-500"> {Math.round((f.valor / total) * 100)}%</span>}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Barras por día que se leen sin pasar el ratón: tocar una barra la marca y dice su fecha y su valor; con hasta
+ * `CIFRAS_ENCIMA` barras, la cifra va encima de cada una.
+ */
+const CIFRAS_ENCIMA = 14;
+function BarrasPorDia({ puntos, alto = 'h-16' }: {
+  puntos: { fecha: string; value: number | null; provisional?: boolean; motivo?: string | null }[]; alto?: string;
+}) {
+  const [sel, setSel] = useState<number | null>(null);
+  const max = Math.max(1, ...puntos.map((p) => p.value ?? 0));
+  const cifras = puntos.length <= CIFRAS_ENCIMA;
+  const p = sel !== null ? puntos[sel] : null;
+  return (
+    <div>
+      <div className={cn('flex items-end gap-1', alto, cifras && 'pt-3')}>
+        {puntos.map((x, i) => (
+          <button key={x.fecha} type="button" onClick={() => setSel(sel === i ? null : i)}
+            aria-label={`${x.fecha}: ${x.value === null ? (x.motivo ?? 'sin datos') : numero(x.value)}`}
+            className="relative flex-1 min-w-[4px] h-full flex items-end group">
+            {cifras && x.value !== null && (
+              <span className={cn('absolute -top-3 inset-x-0 text-center text-[9px] tabular-nums', sel === i ? 'text-zinc-100' : 'text-zinc-500')}>{numero(x.value)}</span>
+            )}
+            {x.value === null
+              ? <div className="w-full h-[3px] rounded bg-zinc-800" />
+              : <div className={cn('w-full rounded-t transition-colors', sel === i ? 'bg-zinc-100'
+                : x.provisional ? 'bg-accent/40 group-hover:bg-accent/60' : 'bg-accent/80 group-hover:bg-accent')}
+                style={{ height: `${Math.max(3, (x.value / max) * 100)}%` }} />}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 h-4 text-[10px] text-zinc-400">
+        {p ? <><b className="text-zinc-100">{p.fecha}</b>: {p.value === null ? (p.motivo ?? 'sin datos') : numero(p.value)}{p.provisional ? ' · provisional' : ''}</>
+          : <span className="text-zinc-600">Toca una barra para ver su día y su valor.</span>}
+      </p>
+    </div>
+  );
+}
+
+export default function Estadisticas({ token, marca, plataforma, marcas }: { token: string; marca: string; plataforma: string; marcas: Marca[] }) {
+  const [dias, setDias] = useState<(typeof RANGOS)[number]>(30);
+  const [data, setData] = useState<RespEstadisticas | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 5 * 60_000); return () => clearInterval(t); }, []);
+
+  useEffect(() => {
+    let vivo = true;
+    setData(null);
+    ops<RespEstadisticas>(token, 'estadisticas', {
+      marca: marca || undefined, desde: new Date(Date.now() - dias * DIA).toISOString(),
+    }).then((r) => { if (vivo) { setData(r); setError(null); } }).catch((e) => vivo && setError(e.message));
+    return () => { vivo = false; };
+  }, [token, marca, dias, tick]);
+
+  // Mejor hora (Sam, 2026-10-26): aparte, para que su lectura no frene las estadísticas.
+  const [horas, setHoras] = useState<RespMejorHora | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    ops<RespMejorHora>(token, 'mejorhora', { marca: marca || undefined })
+      .then((r) => { if (vivo) setHoras(r); })
+      .catch((e) => console.error('[estadisticas] mejor hora:', e instanceof Error ? e.message : e));
+    return () => { vivo = false; };
+  }, [token, marca, tick]);
+  const horaDe = (k: string) => horas?.cuentas.find((h) => `${h.brand_id}|${h.platform}` === k);
+
+  const nombre = (b: string) => marcas.find((m) => m.brand_id === b)?.nombre ?? b;
+  const huso = (b: string) => marcas.find((m) => m.brand_id === b)?.huso ?? null;
+  // Una tarjeta por marca y plataforma con publicaciones medidas O con métricas de cuenta.
+  const claves = useMemo(() => {
+    if (!data) return [];
+    const m = new Map<string, { k: string; e?: Estadistica; c?: ResumenCuenta }>();
+    for (const e of data.estadisticas) m.set(`${e.brand_id}|${e.platform}`, { k: `${e.brand_id}|${e.platform}`, e });
+    for (const c of data.cuenta.estado === 'medida' ? data.cuenta.cuentas : []) {
+      const k = `${c.brand_id}|${c.platform}`;
+      m.set(k, { ...(m.get(k) ?? { k }), c });
+    }
+    return [...m.values()].filter((x) => !plataforma || x.k.endsWith(`|${plataforma}`)).sort((a, b) => a.k.localeCompare(b.k));
+  }, [data, plataforma]);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-2">
+        {RANGOS.map((r) => (
+          <button key={r} onClick={() => setDias(r)}
+            className={cn('px-3 py-2 rounded-lg text-xs border', dias === r ? 'bg-accent/10 text-accent border-accent/50' : 'border-zinc-800 text-zinc-400 hover:bg-zinc-800')}>
+            {r} días
+          </button>
+        ))}
+        <span className="basis-full sm:basis-auto sm:ml-auto text-[11px] text-zinc-500">Publicaciones del carril y detectadas; las manuales y externas no tienen lector de métricas.</span>
+      </div>
+
+      {error && <Aviso tono="error">No se pudieron leer las estadísticas: {error}</Aviso>}
+      {!data && !error && <Cargando />}
+      {data && (
+        <>
+          {data.metricas === 'tabla_inexistente' && <Aviso>Métricas: <b>sin medir</b>. SignalLab todavía no escribe instantáneas.</Aviso>}
+          {data.truncado && <Aviso tono="error">La ventana tiene más publicaciones de las que se resumen: acota el rango.</Aviso>}
+          {data.cuenta.estado === 'medida' && data.cuenta.truncado && <Aviso tono="error">La cuenta tiene más filas de las que se resumen: acota el rango.</Aviso>}
+          {claves.length === 0 && <Aviso>No hay publicaciones ni métricas de cuenta en estos {dias} días.</Aviso>}
+          <div className="grid gap-4 xl:grid-cols-2">
+            {claves.map(({ k, e, c }) => (
+              <Tarjeta key={k} e={e} c={c} nombre={nombre((e ?? c)!.brand_id)} huso={huso((e ?? c)!.brand_id)}
+                cuenta={data.cuenta} hora={horaDe(k)} config={horas?.config} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Tarjeta({ e, c, nombre, huso, cuenta, hora, config }: {
+  e?: Estadistica; c?: ResumenCuenta; nombre: string; huso: string | null; cuenta: RespEstadisticas['cuenta'];
+  hora?: MejorHoraCuenta; config?: RespMejorHora['config'];
+}) {
+  const platform = (e ?? c)!.platform;
+  return (
+    <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-3 sm:p-4 space-y-4 min-w-0" style={bordeDePlataforma(platform)}>
+      <header className="flex flex-wrap items-center gap-2">
+        <Chip className="text-zinc-100">{nombre}</Chip>
+        <ChipPlataforma platform={platform} />
+        {c?.seguidores && (
+          <span className="flex items-center gap-1.5 text-sm text-zinc-100" title={`seguidores al ${c.seguidores.fecha}`}>
+            <Users className="w-4 h-4 text-accent" /><b className="titulo text-2xl">{numero(c.seguidores.value)}</b><span className="text-[11px] text-zinc-500">{c.seguidores.value === 1 ? 'seguidor' : 'seguidores'}</span>
+          </span>
+        )}
+        <PillAsesorDeCuenta brand_id={(e ?? c)!.brand_id} platform={platform} />
+        {e && <span className="ml-auto text-[11px] text-zinc-500">{e.publicaciones} publicadas · {e.medidas} medidas</span>}
+      </header>
+
+      {c ? <Cuenta c={c} relectura={cuenta.estado === 'medida' ? cuenta.relectura_dias : 0} />
+        : (
+          <div className="rounded-xl border border-dashed border-zinc-700 p-3 flex items-start gap-2 text-[11px] text-zinc-500">
+            <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span><b className="text-zinc-300">Cuenta:</b> {cuenta.estado === 'pendiente' ? `pendiente. ${cuenta.motivo}.` : 'sin lecturas de esta cuenta en la ventana.'}</span>
+          </div>
+        )}
+
+      {e && <Publicaciones e={e} huso={huso} />}
+      {hora && <MejorHora h={hora} config={config} />}
+    </section>
+  );
+}
+
+// ── Mejor hora ────────────────────────────────────────────────────────────────
+
+/**
+ * Las franjas del día (en el huso de la marca) con sus publicaciones y la mediana de su métrica a la misma edad. Sólo
+ * las franjas con el mínimo de publicaciones se comparan; si no hay dos, lo dice y no nombra una hora (Sam, 2026-10-26).
+ */
+function MejorHora({ h, config }: { h: MejorHoraCuenta; config?: RespMejorHora['config'] }) {
+  const max = Math.max(1, ...h.franjas.map((f) => f.mediana ?? 0));
+  const edad = config ? (config.edad_minutos % 1440 === 0 ? `${config.edad_minutos / 1440} d` : `${Math.round(config.edad_minutos / 60)} h`) : null;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Clock className="w-4 h-4 text-accent" />
+        <span className="text-xs font-semibold text-zinc-200">Mejor hora para publicar</span>
+        {h.estado === 'comparable' && h.mejor
+          ? <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[11px] font-bold">{h.mejor.inicio}–{h.mejor.fin === 0 ? 24 : h.mejor.fin} h</span>
+          : <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[11px]">datos insuficientes</span>}
+      </div>
+      <p className="text-[11px] text-zinc-400">{h.motivo.charAt(0).toUpperCase() + h.motivo.slice(1)}.</p>
+      {h.franjas.length > 0 && (
+        <ul className="space-y-1" aria-label="Franjas horarias">
+          {h.franjas.map((f) => (
+            <li key={f.inicio} className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-2 text-[11px]">
+              <span className="text-zinc-400 tabular-nums">{f.inicio}–{f.fin === 0 ? 24 : f.fin} h</span>
+              <span className="h-2 rounded bg-zinc-800 overflow-hidden">
+                <span className={cn('block h-full rounded', f.comparable ? 'bg-accent' : 'bg-zinc-600')} style={{ width: `${Math.round(100 * (f.mediana ?? 0) / max)}%` }} />
+              </span>
+              <span className={cn('tabular-nums', f.comparable ? 'text-zinc-200' : 'text-zinc-500')}>
+                {f.mediana === null ? '—' : numero(Math.round(f.mediana))} · {f.publicaciones} {f.publicaciones === 1 ? 'publicación' : 'publicaciones'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[10px] text-zinc-500">
+        Mediana de {h.metrica}{edad ? ` a ${edad} de publicada` : ''}, en la hora de la marca{h.huso ? ` (${h.huso})` : ''}
+        {config ? `; franjas de ${config.banda_horas} h, comparables desde ${config.minimo_por_franja} publicaciones, últimos ${config.ventana_dias} días` : ''}.
+      </p>
+    </div>
+  );
+}
+
+// ── La cuenta ─────────────────────────────────────────────────────────────────
+
+function Cuenta({ c, relectura }: { c: ResumenCuenta; relectura: number }) {
+  const seguidores = c.seguidores?.value ?? null;
+  // Lo bloqueado se agrupa por umbral: una meta por número de seguidores, no una por métrica.
+  const metas = [...c.bloqueadas.reduce((m, b) => {
+    const k = b.min_followers ?? -1;
+    return m.set(k, [...(m.get(k) ?? []), b]);
+  }, new Map<number, ResumenCuenta['bloqueadas']>())].sort((a, b) => a[0] - b[0]);
+  return (
+    <div className="space-y-4">
+      <h4 className="text-[11px] uppercase tracking-wider text-zinc-400">Cuenta</h4>
+
+      {(c.totales.length > 0 || c.campos.length > 0) && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {c.totales.map((t) => (
+            <div key={t.metric} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3" title={t.nota ?? undefined}>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(t.metric)}</div>
+              <div className="titulo text-3xl text-zinc-100">{numero(t.total)}</div>
+              <div className="text-[10px] text-zinc-500">{t.dias === 1 ? '1 día medido' : `${t.dias} días medidos`}</div>
+            </div>
+          ))}
+          {c.campos.map((f) => (
+            <div key={f.metric} className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(f.metric)}</div>
+              <div className="titulo text-3xl text-zinc-100">{numero(f.value)}</div>
+              <div className="text-[10px] text-zinc-500">al {f.fecha}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {c.series.map((s) => <Serie key={s.metric} s={s} relectura={relectura} />)}
+
+      {c.desgloses.map((d) => (
+        <div key={`${d.metric}-${d.breakdown}`}>
+          <h5 className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">{etiquetaMetrica(d.metric)} por {etiquetaMetrica(d.breakdown)}</h5>
+          <BarrasComparadas filas={d.valores.slice(0, 8).map((v) => ({ etiqueta: etiquetaMetrica(v.valor.toLowerCase()), valor: v.total }))} />
+        </div>
+      ))}
+
+      {metas.map(([umbral, bs]) => (
+        <div key={umbral} className="rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 p-3 space-y-1.5">
+          <div className="flex items-center gap-2 text-[11px] text-amber-200">
+            <Lock className="w-3.5 h-3.5" />
+            {umbral > 0
+              ? <span>Se desbloquea con <b>{numero(umbral)} seguidores</b>{seguidores !== null && <> · hoy {numero(seguidores)} · faltan <b>{numero(Math.max(0, umbral - seguidores))}</b></>}</span>
+              : <span>La plataforma todavía no la da</span>}
+          </div>
+          {umbral > 0 && seguidores !== null && (
+            <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div className="h-full bg-amber-400" style={{ width: `${Math.min(100, (seguidores / umbral) * 100)}%` }} />
+            </div>
+          )}
+          <div className="text-[10px] text-zinc-500">{[...new Set(bs.map((b) => etiquetaMetrica(b.metric) + (b.breakdown ? ` (${etiquetaMetrica(b.breakdown)})` : '')))].join(' · ')}</div>
+        </div>
+      ))}
+
+      {c.sinDatos.length > 0 && (
+        <p className="text-[10px] text-zinc-600">Sin datos en la ventana: {c.sinDatos.map((d) => etiquetaMetrica(d.metric) + (d.breakdown ? ` (${etiquetaMetrica(d.breakdown)})` : '')).join(' · ')}</p>
+      )}
+    </div>
+  );
+}
+
+function Serie({ s, relectura }: { s: ResumenCuenta['series'][number]; relectura: number }) {
+  const conValor = s.puntos.filter((p) => p.value !== null);
+  const total = conValor.reduce((x, p) => x + p.value!, 0);
+  const ultimo = conValor[conValor.length - 1];
+  const hayProvisional = s.puntos.some((p) => p.provisional);
+  // Un total acumulado (p. ej. seguidores totales) no se suma: se muestra el último valor (catálogo, #499).
+  const acumulado = s.agregacion === 'last';
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-1">
+        <h5 className="text-[10px] uppercase tracking-wider text-zinc-500" title={s.nota ?? undefined}>{etiquetaMetrica(s.metric)}{acumulado ? '' : ' por día'}</h5>
+        {acumulado
+          ? ultimo && <><span className="text-xs text-zinc-200 font-semibold">{numero(ultimo.value!)}</span><span className="text-[10px] text-zinc-600">al {ultimo.fecha} · total acumulado</span></>
+          : <><span className="text-xs text-zinc-200 font-semibold">{numero(total)}</span><span className="text-[10px] text-zinc-600">suma de {conValor.length} días</span></>}
+      </div>
+      <BarrasPorDia puntos={s.puntos} />
+      {hayProvisional && <p className="mt-1 text-[10px] text-zinc-600">Los últimos {relectura} días son provisionales: la plataforma los consolida con retraso y SignalLab los relee.</p>}
+    </div>
+  );
+}
+
+// ── Las publicaciones ─────────────────────────────────────────────────────────
+
+function Publicaciones({ e, huso }: { e: Estadistica; huso: string | null }) {
+  return (
+    <div className="space-y-4 border-t border-zinc-800 pt-4">
+      <h4 className="text-[11px] uppercase tracking-wider text-zinc-400">Publicaciones</h4>
+      <p className="text-[10px] text-zinc-500">
+        Totales = suma de la última lectura de cada publicación. El alcance sumado cuenta varias veces a quien vio varios posts:
+        no es el alcance único de la cuenta, que llegará con las métricas de cuenta.
+      </p>
+
+      {/* Totales: una tarjeta por métrica, en el orden de su total. */}
+      {e.metricas.length === 0
+        ? <p className="text-[11px] font-mono text-zinc-600">sin medir</p>
+        : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {e.metricas.map((m, i) => (
+              <div key={m.metric} className={cn('rounded-xl border p-3', i === 0 ? 'border-accent/50 bg-accent/5' : 'border-zinc-800 bg-zinc-950/40')}>
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500">{etiquetaMetrica(m.metric)}</div>
+                <div className="titulo text-3xl text-zinc-100">{numero(m.total)}</div>
+                <div className="text-[10px] text-zinc-500">mediana {numero(m.mediana)} · {m.posts} posts</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+      {/* Por formato */}
+      <div>
+        <h4 className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">Por formato</h4>
+        <BarrasComparadas porcentaje={false} filas={e.porFormato.map((f) => ({ etiqueta: etiquetaFormato(f.formato), valor: f.publicaciones }))} />
+      </div>
+
+      {/* Publicaciones por día de publicación */}
+      <div>
+        <h4 className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">Publicaciones por día</h4>
+        <BarrasPorDia alto="h-14" puntos={e.porDia.map((d) => ({ fecha: d.dia, value: d.publicaciones }))} />
+      </div>
+
+      {/* Top content */}
+      {e.metricaTop && e.top.length > 0 && (
+        <div>
+          <h4 className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">Top por {etiquetaMetrica(e.metricaTop)}</h4>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 sm:gap-2">
+            {e.top.map((p) => {
+              const v = p.metricas.find((m) => m.metric === e.metricaTop)?.value;
+              const img = p.image_url ?? p.media_urls?.[0] ?? null;
+              return (
+                <a key={p.id} href={p.enlace ?? undefined} target="_blank" rel="noreferrer" title={`${fechaHora(p.published_at, huso)} · ${p.copy_text ?? ''}`}
+                  className="relative block aspect-square rounded-lg overflow-hidden bg-zinc-800 group">
+                  {img && <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer" className="w-full h-full object-cover" />}
+                  <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] font-mono text-zinc-100">{v != null ? numero(v) : '—'}</span>
+                  {p.enlace && <ExternalLink className="absolute top-1 right-1 w-3 h-3 text-white/70 opacity-0 group-hover:opacity-100" />}
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
