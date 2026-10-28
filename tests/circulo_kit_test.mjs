@@ -22,7 +22,7 @@ const j = fuente.indexOf('// ── CIRCULO-KIT:END ──');
 assert.ok(i >= 0 && j > i, 'sentinelas CIRCULO-KIT no encontrados en api/circle-kit.ts');
 const tmp = join(mkdtempSync(join(tmpdir(), 'circulo-kit-')), 'kit.mts');
 writeFileSync(tmp, fuente.slice(i, j), 'utf8');
-const { pedidoDoc } = await import(pathToFileURL(tmp).href);
+const { pedidoDoc, claseDeVisita, metodoDe, imagenPermitida } = await import(pathToFileURL(tmp).href);
 const vercel = JSON.parse(readFileSync(join(ROOT, 'vercel.json'), 'utf8'));
 
 let pass = 0; const fails = [];
@@ -64,19 +64,57 @@ test('la tarjeta de un envío: un id de uuid, con el host del Círculo si lo hay
   }
 });
 
-test('vercel.json: el subdominio sólo sirve /guia, /crear, /operador y /p/<id>, y el resto redirige a /guia', () => {
+test('vercel.json: el subdominio sólo sirve /guia, /crear, /operador, /p/<id>, /p/<id>/toque y /p/<id>/imagen, y el resto redirige a /guia', () => {
   const host = (r) => r.has?.[0]?.type === 'host' && r.has[0].value?.pre === 'circulo.';
   const reescrituras = (vercel.rewrites ?? []).filter(host).map((r) => [r.source, r.destination]);
   assert.deepEqual(reescrituras, [
     ['/:doc(guia|crear|operador)', '/api/circle-kit?doc=:doc'],
+    ['/p/:id([0-9a-f-]{36})/imagen', '/api/circle-kit?p=:id&imagen=1'],
+    ['/p/:id([0-9a-f-]{36})/toque', '/api/circle-kit?p=:id&toque=1'],
     ['/p/:id([0-9a-f-]{36})', '/api/circle-kit?p=:id'],
   ]);
   const redir = (vercel.redirects ?? []).filter(host);
   assert.deepEqual(redir.map((r) => [r.source, r.destination, r.permanent]), [
     ['/', '/guia', false],
-    ['/:path((?!guia$|crear$|operador$|api/circle-kit$|p/[0-9a-f-]{36}$).+)', '/guia', false],
+    ['/:path((?!guia$|crear$|operador$|api/circle-kit$|p/[0-9a-f-]{36}$|p/[0-9a-f-]{36}/toque$|p/[0-9a-f-]{36}/imagen$).+)', '/guia', false],
   ], 'la app de SocialLab nunca se sirve en el subdominio de una marca');
   assert.equal(vercel.functions?.['api/publish.ts']?.maxDuration, 300, 'las funciones de SocialLab no cambian');
+});
+
+test('el toque al botón de la tarjeta: sólo con toque=1, y llega por POST', () => {
+  assert.deepEqual(pedidoDoc({ p: ID, toque: '1' }, 'circulo.marca.com'), { mode: 'card_tap', id: ID, host: 'circulo.marca.com' });
+  assert.deepEqual(pedidoDoc({ p: ID, toque: '1' }, 'social-lab.vercel.app'), { mode: 'card_tap', id: ID });
+  assert.equal(pedidoDoc({ p: ID, toque: 'si' }, 'circulo.marca.com'), null);
+  assert.equal(metodoDe('card_tap'), 'POST');
+  assert.equal(metodoDe('card'), 'GET');
+  assert.equal(metodoDe('doc'), 'GET');
+});
+
+test('el tipo de visita: el lector de vistas previas aparte, y del navegador no sale nada más', () => {
+  assert.equal(claseDeVisita('WhatsApp/2.24.21.80 i'), 'preview');
+  assert.equal(claseDeVisita('WhatsApp/2.24.21.80 A'), 'preview');
+  assert.equal(claseDeVisita('facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'), 'preview');
+  assert.equal(claseDeVisita('TelegramBot (like TwitterBot)'), 'preview');
+  assert.equal(claseDeVisita('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'), 'ios');
+  assert.equal(claseDeVisita('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) [FBAN/FBIOS;FBAV/480.0]'), 'ios', 'el navegador de Facebook en iPhone es una persona');
+  assert.equal(claseDeVisita('Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 Chrome/129.0 Mobile Safari/537.36'), 'android');
+  assert.equal(claseDeVisita('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'), 'other');
+  assert.equal(claseDeVisita(undefined), 'other');
+  assert.match(fuente, /visita: claseDeVisita\(req\.headers\['user-agent'\]\)/, 'a la EF va la clase, no el navegador');
+  assert.doesNotMatch(fuente.replace(/^\s*(\*|\/\/).*$/gm, ''), /user-agent'\]\s*[,}]|ua:\s*req/, 'el navegador no viaja a la EF');
+});
+
+test('la imagen liviana: sólo con imagen=1, por GET, y sólo de nuestro Storage', () => {
+  assert.deepEqual(pedidoDoc({ p: ID, imagen: '1' }, 'circulo.marca.com'), { mode: 'card_image', id: ID, host: 'circulo.marca.com' });
+  assert.equal(pedidoDoc({ p: ID, imagen: 'x' }, 'circulo.marca.com'), null);
+  assert.equal(pedidoDoc({ p: ID, imagen: '1', toque: '1' }, 'circulo.marca.com'), null, 'una cosa o la otra');
+  assert.equal(metodoDe('card_image'), 'GET');
+  const SBU = 'https://proyecto.supabase.co';
+  assert.ok(imagenPermitida(`${SBU}/storage/v1/render/image/public/m/a.png?width=720&resize=contain&quality=75`, SBU));
+  assert.ok(imagenPermitida(`${SBU}/storage/v1/render/image/public/m/a.png`, `${SBU}/`));
+  for (const u of [`${SBU}/storage/v1/object/public/m/a.png`, 'https://otro.example/storage/v1/render/image/public/a.png',
+    `${SBU}/storage/v1/render/image/public/a.png" onerror="x`, null, 42]) assert.equal(imagenPermitida(u, SBU), false, String(u));
+  assert.match(fuente, /fetch\(data\.url, \{ headers: \{ Accept: 'image\/webp' \} \}\)/, 'se pide en webp');
 });
 
 test('el archivo no nombra ninguna marca', () => {
