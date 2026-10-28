@@ -3,6 +3,12 @@
  *
  *   https://circulo.<dominio de la marca>/guia | /crear | /operador   ← el enlace que reciben las personas
  *   GET /api/circle-kit?t=<doc_token>&doc=guia|crear|operador|kit       ← enlace largo, para una marca sin subdominio
+ *   https://circulo.<dominio de la marca>/p/<id del envío>             ← 2026-10-28: la TARJETA de una publicación
+ *   GET /api/circle-kit?p=<id del envío>                                ← la misma tarjeta, sin subdominio
+ *
+ * LA TARJETA (Sam, 2026-10-28): el enlace de una publicación de Facebook no abría en iPhone. El mensaje del grupo
+ * lleva ahora esta página: sus etiquetas og llevan la imagen del post —WhatsApp la dibuja en el mensaje— y un
+ * botón a la página de la marca, donde la publicación es la primera. La compone la EF (modo `card`); aquí se sirve.
  *
  * Por qué vive aquí (Sam, 2026-10-21): el Círculo amplifica cada publicación en redes, y SocialLab es la
  * salida a redes del ecosistema. Antes lo servía `unrlvl-context` (`api/circle-kit.js`), que es el sistema
@@ -34,14 +40,21 @@ const CRON_SECRET = () => process.env.IID_CRON_SECRET ?? '';
 const TOKEN = /^[0-9a-f]{36}$/;
 const DOCS = new Set(['guia', 'crear', 'operador', 'kit']);
 const HOST_CIRCULO = /^circulo\.[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+const ID_ENVIO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** Qué documento pide la llamada, y con qué llave. `null` = enlace no válido. */
+/** Qué pide la llamada —un documento o la tarjeta de un envío— y con qué llave. `null` = enlace no válido. */
 export function pedidoDoc(
-  query: { t?: unknown; doc?: unknown }, cabeceraHost: unknown,
-): { mode: 'doc'; doc: string; host?: string; token?: string } | null {
+  query: { t?: unknown; doc?: unknown; p?: unknown }, cabeceraHost: unknown,
+): { mode: 'doc'; doc: string; host?: string; token?: string } | { mode: 'card'; id: string; host?: string } | null {
   const t = String(query.t ?? '');
   const doc = String(query.doc ?? 'guia');
   const host = String(cabeceraHost ?? '').toLowerCase().split(',')[0].trim().split(':')[0];
+  // La tarjeta: un id de envío con forma de uuid. En el subdominio de una marca, la EF comprueba que sea suyo.
+  if (query.p !== undefined) {
+    const id = String(query.p).toLowerCase();
+    if (!ID_ENVIO.test(id)) return null;
+    return HOST_CIRCULO.test(host) ? { mode: 'card', id, host } : { mode: 'card', id };
+  }
   if (!DOCS.has(doc)) return null;
   if (!t && HOST_CIRCULO.test(host)) return { mode: 'doc', host, doc };
   if (TOKEN.test(t)) return { mode: 'doc', token: t, doc };
