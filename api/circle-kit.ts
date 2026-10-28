@@ -7,6 +7,8 @@
  *   GET /api/circle-kit?p=<id del envío>                                ← la misma tarjeta, sin subdominio
  *   POST https://circulo.<dominio>/p/<id>/toque  ·  POST /api/circle-kit?p=<id>&toque=1
  *                                                                       ← 2026-10-28: el toque al botón de la tarjeta
+ *   GET https://circulo.<dominio>/p/<id>/imagen  ·  GET /api/circle-kit?p=<id>&imagen=1
+ *                                                                       ← 2026-10-28: la imagen liviana de la tarjeta
  *
  * LA TARJETA (Sam, 2026-10-28): el enlace de una publicación de Facebook no abría en iPhone. El mensaje del grupo
  * lleva ahora esta página: sus etiquetas og llevan la imagen del post —WhatsApp la dibuja en el mensaje— y un
@@ -21,6 +23,11 @@
  * su botón llegan a la EF con el TIPO de visita y nada más: el lector de vistas previas (WhatsApp y otros, que
  * leen la página para dibujar la imagen), un iPhone, un Android u otro. El navegador se mira aquí para
  * clasificar y no sale de aquí: ni el navegador, ni la IP, ni ningún dato de la persona llegan a la base.
+ *
+ * LA IMAGEN LIVIANA. Las imágenes de las piezas son PNG de 1,4 a 1,7 MB [medido el 2026-10-28], y la vista
+ * previa de WhatsApp no dibuja imágenes tan pesadas. Cuando la imagen de la tarjeta es de una pieza, la EF da
+ * aquí la dirección del redimensionado de Storage, y aquí se pide en webp (unos 35 KB) y se sirve. Sólo se
+ * pide a una dirección de nuestro Storage: cualquier otra es un error.
  *
  * QUÉ HACE Y QUÉ NO. Este archivo NO compone el documento: lo pide a la EF `circle-dispatch` (modo `doc`),
  * que rellena la plantilla ÚNICA de `circle_templates` con el dato vivo de la marca. Aquí sólo se sirve el
@@ -40,7 +47,8 @@
 
 declare const process: { env: Record<string, string | undefined> };
 
-const EF_URL = () => `${process.env.SUPABASE_URL || 'https://amlvyycfepwhiindxgzw.supabase.co'}/functions/v1/circle-dispatch`;
+const SB_URL = () => process.env.SUPABASE_URL || 'https://amlvyycfepwhiindxgzw.supabase.co';
+const EF_URL = () => `${SB_URL()}/functions/v1/circle-dispatch`;
 const CRON_SECRET = () => process.env.IID_CRON_SECRET ?? '';
 
 // ── CIRCULO-KIT:BEGIN ── bloque PURO. Lo prueba `tests/circulo_kit_test.mjs`.
@@ -52,8 +60,8 @@ const ID_ENVIO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 /** Qué pide la llamada —un documento, la tarjeta de un envío o el toque a su botón— y con qué llave.
  *  `null` = enlace no válido. */
 export function pedidoDoc(
-  query: { t?: unknown; doc?: unknown; p?: unknown; toque?: unknown }, cabeceraHost: unknown,
-): { mode: 'doc'; doc: string; host?: string; token?: string } | { mode: 'card' | 'card_tap'; id: string; host?: string } | null {
+  query: { t?: unknown; doc?: unknown; p?: unknown; toque?: unknown; imagen?: unknown }, cabeceraHost: unknown,
+): { mode: 'doc'; doc: string; host?: string; token?: string } | { mode: 'card' | 'card_tap' | 'card_image'; id: string; host?: string } | null {
   const t = String(query.t ?? '');
   const doc = String(query.doc ?? 'guia');
   const host = String(cabeceraHost ?? '').toLowerCase().split(',')[0].trim().split(':')[0];
@@ -61,7 +69,10 @@ export function pedidoDoc(
   if (query.p !== undefined) {
     const id = String(query.p).toLowerCase();
     if (!ID_ENVIO.test(id)) return null;
-    const mode = query.toque === undefined ? 'card' as const : String(query.toque) === '1' ? 'card_tap' as const : null;
+    if (query.toque !== undefined && query.imagen !== undefined) return null;
+    const mode = query.toque !== undefined ? (String(query.toque) === '1' ? 'card_tap' as const : null)
+      : query.imagen !== undefined ? (String(query.imagen) === '1' ? 'card_image' as const : null)
+      : 'card' as const;
     if (!mode) return null;
     return HOST_CIRCULO.test(host) ? { mode, id, host } : { mode, id };
   }
@@ -80,6 +91,12 @@ export function claseDeVisita(ua: unknown): 'preview' | 'ios' | 'android' | 'oth
   if (/iPhone|iPad|iPod/.test(s)) return 'ios';
   if (/Android/.test(s)) return 'android';
   return 'other';
+}
+
+/** La imagen liviana sólo se pide a nuestro Storage, al redimensionado. */
+export function imagenPermitida(url: unknown, sbUrl: string): boolean {
+  const base = `${sbUrl.replace(/\/+$/, '')}/storage/v1/render/image/public/`;
+  return typeof url === 'string' && url.startsWith(base) && !/[\s"'<>]/.test(url);
 }
 
 /** El método que admite cada pedido: el toque llega por `sendBeacon` (POST); lo demás se abre (GET). */
@@ -106,7 +123,8 @@ export default async function handler(req: any, res: any) {
     r = await fetch(EF_URL(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-cron-secret': CRON_SECRET() },
-      body: JSON.stringify(pedido.mode === 'doc' ? pedido : { ...pedido, visita: claseDeVisita(req.headers['user-agent']) }),
+      body: JSON.stringify(pedido.mode === 'card' || pedido.mode === 'card_tap'
+        ? { ...pedido, visita: claseDeVisita(req.headers['user-agent']) } : pedido),
     });
   } catch (e) {
     console.error('[circle-kit] CIRCLE_KIT_EF_UNREACHABLE', e instanceof Error ? e.message : String(e));
@@ -117,6 +135,25 @@ export default async function handler(req: any, res: any) {
     if (!r.ok || !data?.ok) console.error('[circle-kit] CIRCLE_KIT_TAP_FAILED', String(data?.error ?? `EF ${r.status}`).slice(0, 160));
     res.setHeader('Cache-Control', 'no-store');
     return res.status(r.ok && data?.ok ? 204 : 502).end();
+  }
+  if (pedido.mode === 'card_image') {
+    if (!r.ok || !data?.ok || !imagenPermitida(data.url, SB_URL())) {
+      const codigo = String(data?.error ?? `EF ${r.status}`).slice(0, 160);
+      console.error('[circle-kit] CIRCLE_KIT_IMAGE_FAILED', codigo);
+      return texto(res, codigo.startsWith('CIRCLE_NOT_FOUND') ? 404 : 502, 'CIRCLE_KIT_IMAGE_FAILED');
+    }
+    let img: Response;
+    try { img = await fetch(data.url, { headers: { Accept: 'image/webp' } }); }
+    catch { return texto(res, 502, 'CIRCLE_KIT_IMAGE_UNREACHABLE'); }
+    const tipo = img.headers.get('content-type') ?? '';
+    if (!img.ok || !tipo.startsWith('image/')) {
+      console.error('[circle-kit] CIRCLE_KIT_IMAGE_FAILED', `storage ${img.status}`);
+      return texto(res, 502, 'CIRCLE_KIT_IMAGE_FAILED');
+    }
+    res.setHeader('Content-Type', tipo);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.status(200);
+    return res.end(new Uint8Array(await img.arrayBuffer()));
   }
   if (!r.ok || !data?.ok || typeof data.html !== 'string') {
     const codigo = String(data?.error ?? `EF ${r.status}`).slice(0, 160);
