@@ -23,6 +23,9 @@ import {
   CONTAINER_TIMEOUT_MS, FIRST_CHECK_MS, CHECK_EVERY_MS, PUBLISH_DEADLINE_MS,
   CREATE_RETRY_WAITS_MS, dormir, leerEstadoContenedor, esFalloTransitorioDeCreacion, type ContainerStatus,
 } from './_igContainer.js';
+// TikTok (vía EXENTA de auditoría: borrador al inbox por `video.upload`) y LinkedIn (BLOQUEADO).
+import { publishTikTokInbox } from './_tiktokApi.js';
+import { publishLinkedInBlocked } from './_linkedin.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -404,13 +407,27 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
       };
     }
 
-    // Plataformas sin soporte en Meta MCP aún (TikTok, LinkedIn, etc.)
+    if (platform === 'TIKTOK') {
+      // Vía EXENTA de auditoría: `video.upload` crea un borrador en el inbox de la cuenta
+      // (`POST .../inbox/video/init/` con `source=PULL_FROM_URL`). El token se resuelve por marca
+      // desde `social_oauth_tokens`, igual que el carril Meta resuelve el suyo por `meta_accounts`.
+      // El posteo público directo (`video.publish`) exige auditoría y NO está aquí a propósito.
+      return publishTikTokInbox(post);
+    }
+
+    if (platform === 'LINKEDIN') {
+      // BLOQUEADO: la Página de empresa exige la Community Management API (entidad legal). No se
+      // simula — falla diciendo el motivo. El esqueleto del OAuth y el almacén de token sí existen.
+      return publishLinkedInBlocked(post);
+    }
+
+    // Plataformas sin carril de publicación todavía (YouTube, Threads, etc.)
     return {
       post_id:  post.id,
       platform,
       brand_id: post.brand_id,
       status:   'failed',
-      error:    `Platform ${platform} not yet supported in Meta MCP. Post queued for manual publish.`,
+      error:    `Platform ${platform} not yet supported. Post queued for manual publish.`,
     };
 
   } catch (err) {
