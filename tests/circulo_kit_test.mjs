@@ -54,15 +54,27 @@ test('una llave mal formada no llega a la EF', () => {
   ]) assert.equal(pedidoDoc(q, h), null, JSON.stringify([q, h]));
 });
 
-test('vercel.json: el subdominio sólo sirve /guia, /crear y /operador, y el resto redirige a /guia', () => {
+const ID = '1b4e28ba-2fa1-41d2-883f-0016d3cca427';
+
+test('la tarjeta de un envío: un id de uuid, con el host del Círculo si lo hay', () => {
+  assert.deepEqual(pedidoDoc({ p: ID }, 'circulo.marca-ejemplo.com'), { mode: 'card', id: ID, host: 'circulo.marca-ejemplo.com' });
+  assert.deepEqual(pedidoDoc({ p: ID.toUpperCase() }, 'social-lab.vercel.app'), { mode: 'card', id: ID }, 'sin subdominio, sólo el id');
+  for (const p of ['', 'x', ID + 'a', ID.replace(/-/g, ''), `${ID}' or 1=1`]) {
+    assert.equal(pedidoDoc({ p }, 'circulo.marca.com'), null, JSON.stringify(p));
+  }
+});
+
+test('vercel.json: el subdominio sólo sirve /guia, /crear, /operador y /p/<id>, y el resto redirige a /guia', () => {
   const host = (r) => r.has?.[0]?.type === 'host' && r.has[0].value?.pre === 'circulo.';
-  const reescritura = (vercel.rewrites ?? []).find(host);
-  assert.equal(reescritura?.source, '/:doc(guia|crear|operador)');
-  assert.equal(reescritura?.destination, '/api/circle-kit?doc=:doc');
+  const reescrituras = (vercel.rewrites ?? []).filter(host).map((r) => [r.source, r.destination]);
+  assert.deepEqual(reescrituras, [
+    ['/:doc(guia|crear|operador)', '/api/circle-kit?doc=:doc'],
+    ['/p/:id([0-9a-f-]{36})', '/api/circle-kit?p=:id'],
+  ]);
   const redir = (vercel.redirects ?? []).filter(host);
   assert.deepEqual(redir.map((r) => [r.source, r.destination, r.permanent]), [
     ['/', '/guia', false],
-    ['/:path((?!guia$|crear$|operador$|api/circle-kit$).+)', '/guia', false],
+    ['/:path((?!guia$|crear$|operador$|api/circle-kit$|p/[0-9a-f-]{36}$).+)', '/guia', false],
   ], 'la app de SocialLab nunca se sirve en el subdominio de una marca');
   assert.equal(vercel.functions?.['api/publish.ts']?.maxDuration, 300, 'las funciones de SocialLab no cambian');
 });

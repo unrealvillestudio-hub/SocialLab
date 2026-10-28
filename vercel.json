@@ -18,7 +18,7 @@
       "permanent": false
     },
     {
-      "source": "/:path((?!guia$|crear$|operador$|api/circle-kit$).+)",
+      "source": "/:path((?!guia$|crear$|operador$|api/circle-kit$|p/[0-9a-f-]{36}$).+)",
       "has": [{ "type": "host", "value": { "pre": "circulo." } }],
       "destination": "/guia",
       "permanent": false
@@ -29,6 +29,11 @@
       "source": "/:doc(guia|crear|operador)",
       "has": [{ "type": "host", "value": { "pre": "circulo." } }],
       "destination": "/api/circle-kit?doc=:doc"
+    },
+    {
+      "source": "/p/:id([0-9a-f-]{36})",
+      "has": [{ "type": "host", "value": { "pre": "circulo." } }],
+      "destination": "/api/circle-kit?p=:id"
     }
   ]
 }
