@@ -40,6 +40,8 @@
   /* Mobile first: sin zoom involuntario al enfocar un campo en iOS (exige ≥16px), y nada se sale de ancho. */
   html, body { overflow-x: hidden; }
   @media (max-width: 639px) { input, select, textarea { font-size: 16px !important; } }
+  /* App instalable (2026-11-17): en pantalla táctil, los campos miden al menos 44 px de alto (guía de Apple y Google). */
+  @media (pointer: coarse) { .entrada { min-height: 44px; } }
 }
 
 /* El logotipo del lab: >SocialLab. Bloque de logotipo de la marca copiado de BP v1.6 `logotype.css_complete` (el
