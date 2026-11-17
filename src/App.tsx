@@ -11,6 +11,7 @@ import Hoy from './views/Hoy';
 import { AvisoComentarios, ProveedorPulso, usePulso, type FocoAsesor } from './ui/Pulso';
 import Acciones from './views/Acciones';
 import { tramosDeCaja } from './logotipo';
+import { borrarSesion, guardarSesion, leerSesion } from './sesionGuardada';
 import { registrarMaquetas, registrarPerfiles } from './ui/Maqueta';
 import { EstrategiaDeLaSemana } from './ui/Objetivos';
 
@@ -46,11 +47,17 @@ const Logo = () => (
   </div>
 );
 
-/** Sesión en memoria, igual que el Orchestrator: al refrescar se vuelve a entrar. */
+/**
+ * La sesión se guarda en el dispositivo hasta que caduca (`sesionGuardada.ts`, Sam 2026-11-17): con la app instalada, el
+ * teléfono la cierra y reabre a menudo y la operadora no debe volver a escribir la contraseña cada vez.
+ * «Salir», la caducidad o un 401 de la API la borran.
+ */
 export default function App() {
-  const [sesion, setSesion] = useState<Sesion | null>(null);
-  if (!sesion) return <Entrada onSesion={setSesion} />;
-  return <Tablero sesion={sesion} onSalir={() => setSesion(null)} />;
+  const [sesion, setSesion] = useState<Sesion | null>(() => leerSesion());
+  const entrarCon = (s: Sesion) => { guardarSesion(s); setSesion(s); };
+  const salir = () => { borrarSesion(); setSesion(null); };
+  if (!sesion) return <Entrada onSesion={entrarCon} />;
+  return <Tablero sesion={sesion} onSalir={salir} />;
 }
 
 function Entrada({ onSesion }: { onSesion: (s: Sesion) => void }) {
@@ -119,7 +126,7 @@ function Tablero({ sesion, onSalir }: { sesion: Sesion; onSalir: () => void }) {
         <Logo />
         <div className="flex items-center gap-2 shrink-0">
           <span className="hidden sm:inline text-[11px] text-zinc-400">{sesion.sub} <span className="text-accent/70 uppercase">{sesion.role}</span></span>
-          <button onClick={onSalir} title="Salir" aria-label="Salir" className="p-2.5 rounded-full hover:bg-zinc-800"><LogOut className="w-4 h-4 text-zinc-500" /></button>
+          <button onClick={onSalir} title="Salir" aria-label="Salir" className="p-3.5 -mr-2 rounded-full hover:bg-zinc-800"><LogOut className="w-4 h-4 text-zinc-500" /></button>
         </div>
       </header>
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">

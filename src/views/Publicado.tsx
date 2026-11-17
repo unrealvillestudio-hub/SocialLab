@@ -80,13 +80,13 @@ export default function Publicado({ token, marca, plataforma, marcas }: { token:
         <div className="sm:hidden flex items-end gap-1" role="group" aria-label="Columnas">
           {([2, 1] as const).map((n) => (
             <button key={n} onClick={() => setColumnas(n)} aria-pressed={columnas === n} title={n === 2 ? 'Grid de 2 columnas' : '1 columna'}
-              className={cn('flex-1 flex items-center justify-center py-2.5 rounded-lg border',
+              className={cn('flex-1 flex items-center justify-center py-2.5 min-h-11 rounded-lg border',
                 columnas === n ? 'bg-accent/10 text-accent border-accent/50' : 'border-zinc-800 text-zinc-500')}>
               {n === 2 ? <LayoutGrid className="w-4 h-4" /> : <Square className="w-4 h-4" />}
             </button>
           ))}
         </div>
-        <button onClick={() => { setRecarga((n) => n + 1); recargarVivo(); }} className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
+        <button onClick={() => { setRecarga((n) => n + 1); recargarVivo(); }} className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1.5 px-3 py-2.5 min-h-11 sm:min-h-0 rounded-lg bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700">
           <RefreshCw className="w-3.5 h-3.5" /> Actualizar
         </button>
       </div>
