@@ -43,11 +43,20 @@ OAuth), `api/_linkedin.ts` (puro + posteo bloqueado), `api/linkedin-oauth.ts` (e
    https://<dominio-de-produccion-de-SocialLab>/api/tiktok-oauth
    ```
 
-   Debe coincidir **exactamente** con la env var `TIKTOK_REDIRECT_URI`. SocialLab aún no tiene
-   dominio de producción declarado (`README.md`: «deploy pendiente`), por eso la URI se deja como
-   env var en vez de cablearla: **decisión tuya** cuál es el dominio final (p. ej.
-   `https://unrlvl-sociallab.vercel.app/api/tiktok-oauth`). TikTok exige que la redirect URI esté
-   registrada; el host no tiene que ser el dominio verificado.
+   Debe coincidir **exactamente** con la env var `TIKTOK_REDIRECT_URI`. La URI se deja como env var
+   en vez de cablearla en el código. TikTok exige que la redirect URI esté registrada; el host no
+   tiene que ser el dominio verificado.
+
+   **Vigente (2026-11-17, confirmado por Sam):** el dominio de producción es
+   `unrlvl-social-lab.vercel.app`, **con guion**, y la URI es
+   `https://unrlvl-social-lab.vercel.app/api/tiktok-oauth`. Medido ese día: el inicio del flujo en
+   producción redirige a TikTok con exactamente esa `redirect_uri`.
+
+   > **⛔ NO OPERATIVO — redacción anterior.** Se conserva por trazabilidad: *«SocialLab aún no tiene
+   > dominio de producción declarado (`README.md`: «deploy pendiente`), por eso la URI se deja como
+   > env var en vez de cablearla: decisión tuya cuál es el dominio final (p. ej.
+   > `https://unrlvl-sociallab.vercel.app/api/tiktok-oauth`).»* El ejemplo iba **sin guion** y no es
+   > el dominio real.
 
 2. **Carga el secreto de app de TikTok** en las env vars del proyecto de Vercel (SocialLab):
    - `TIKTOK_CLIENT_KEY` — el Client Key de la app.
