@@ -4,6 +4,9 @@
  * y los publica via Meta MCP:
  *   INSTAGRAM  ig_create_container + ig_get_container_status (hasta FINISHED) + ig_publish_container
  *   FACEBOOK   fb_publish_photo si el post lleva imagen · fb_publish_post si no (N11, 2026-09-08)
+ *   REELS      IG: contenedor REELS (video + portada) · FB: fb_publish_reel + confirmación (2026-11-19)
+ *   STORY      IG: contenedor STORIES · FB: fb_publish_story, de foto o de video (2026-11-19)
+ *   Qué se publica según la fila lo decide `mediaPlanOf` (`_mediaPlan.ts`, puro y probado).
  *
  * Puede llamarse:
  * - Manualmente desde Claude / Ayra
@@ -26,6 +29,10 @@ import {
 // TikTok (vía EXENTA de auditoría: borrador al inbox por `video.upload`) y LinkedIn (BLOQUEADO).
 import { publishTikTokInbox } from './_tiktokApi.js';
 import { publishLinkedInBlocked } from './_linkedin.js';
+import {
+  mediaPlanOf, leerEstadoVideoFb, VIDEO_CONTAINER_TIMEOUT_MS, VIDEO_FIRST_CHECK_MS,
+  FB_VIDEO_CONFIRM_TIMEOUT_MS, FB_VIDEO_CHECK_EVERY_MS,
+} from './_mediaPlan.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -184,13 +191,14 @@ type EsperaResultado = { listo: true } | { listo: false; error: string };
 
 async function esperarContenedorListo(
   brand_id: string, creation_id: string, deadline: number,
+  plazos: { timeoutMs: number; firstCheckMs: number } = { timeoutMs: CONTAINER_TIMEOUT_MS, firstCheckMs: FIRST_CHECK_MS },
 ): Promise<EsperaResultado> {
-  const hasta = Math.min(Date.now() + CONTAINER_TIMEOUT_MS, deadline);
+  const hasta = Math.min(Date.now() + plazos.timeoutMs, deadline);
   let ultimo: ContainerStatus = 'UNKNOWN';
   let detalle: string | null = null;
   let consultas = 0;
 
-  await dormir(Math.min(FIRST_CHECK_MS, Math.max(0, hasta - Date.now())));
+  await dormir(Math.min(plazos.firstCheckMs, Math.max(0, hasta - Date.now())));
 
   while (Date.now() < hasta) {
     consultas++;
@@ -217,7 +225,7 @@ async function esperarContenedorListo(
   }
 
   return { listo: false, error:
-    `Container not ready after ${Math.round((Date.now() - (hasta - CONTAINER_TIMEOUT_MS)) / 1000)}s `
+    `Container not ready after ${Math.round((Date.now() - (hasta - plazos.timeoutMs)) / 1000)}s `
     + `(${consultas} check(s), last status ${ultimo}${detalle ? `: ${detalle}` : ''}). `
     + 'Publishing now would fail with 9007.' };
 }
@@ -247,13 +255,131 @@ async function crearContenedorIg(
   return { id: null, texto, intentos: CREATE_RETRY_WAITS_MS.length + 1 };
 }
 
+// ── REELS Y STORIES (2026-11-19) ──────────────────────────────────────────────
+//
+// Instagram: el mismo camino de tres pasos que la imagen —crear, ESPERAR a FINISHED, publicar—, con
+// los plazos del video (`_mediaPlan.ts`). Si el contenedor no llega a FINISHED en plazo, no se publica:
+// la fila falla con su motivo y el contenedor caduca solo a las 24 h sin haber salido.
+//
+// Facebook: el MCP sube el video por URL y Facebook lo publica AL TERMINAR DE PROCESARLO. Aquí se lee el
+// estado hasta que consta publicado. Si el plazo se agota antes, el video ya está en manos de Facebook y
+// saldrá solo: la fila se da por publicada con el `video_id` y se avisa en el log. Marcarla `failed`
+// invitaría a reintentar, y un reintento subiría un SEGUNDO reel a la Página.
+
+type Resultado = PublishResult;
+
+/** Crea, espera y publica un contenedor de Instagram de video o de story. */
+async function publicarContenedorIg(
+  post: ScheduledPost, platform: string, args: Record<string, unknown>, esVideo: boolean,
+  etiqueta: string, deadline: number,
+): Promise<Resultado> {
+  const base = { post_id: post.id, platform, brand_id: post.brand_id };
+  const creado = await crearContenedorIg({ brand_id: post.brand_id, ...args }, deadline);
+  if (!creado.id) {
+    return { ...base, status: 'failed',
+             error: `${etiqueta} container creation failed after ${creado.intentos} attempt(s): ${'texto' in creado ? creado.texto : ''}` };
+  }
+  const espera = await esperarContenedorListo(post.brand_id, creado.id, deadline, esVideo
+    ? { timeoutMs: VIDEO_CONTAINER_TIMEOUT_MS, firstCheckMs: VIDEO_FIRST_CHECK_MS }
+    : { timeoutMs: CONTAINER_TIMEOUT_MS, firstCheckMs: FIRST_CHECK_MS });
+  if (!espera.listo) {
+    return { ...base, status: 'failed', error: `${etiqueta} container not publishable: ${'error' in espera ? espera.error : ''}` };
+  }
+  const pubText = extractMcpText(await mcpCall('ig_publish_container', { brand_id: post.brand_id, creation_id: creado.id }));
+  let pid: string | null = null;
+  try { pid = JSON.parse(pubText ?? '{}').id ?? null; } catch { /* no JSON */ }
+  return { ...base, status: pid ? 'published' : 'failed', platform_post_id: pid ?? undefined,
+           error: pid ? undefined : `${etiqueta} publish failed: ${pubText}` };
+}
+
+/** Lee el estado de un video de Página hasta que consta publicado, falla o se acaba el plazo. */
+async function confirmarVideoFb(brand_id: string, video_id: string, deadline: number) {
+  const hasta = Math.min(Date.now() + FB_VIDEO_CONFIRM_TIMEOUT_MS, deadline);
+  let ultimo: ReturnType<typeof leerEstadoVideoFb> = { estado: 'pending', detalle: null };
+  while (Date.now() < hasta) {
+    await dormir(Math.min(FB_VIDEO_CHECK_EVERY_MS, Math.max(0, hasta - Date.now())));
+    ultimo = leerEstadoVideoFb(extractMcpText(await mcpCall('fb_get_video_status', { brand_id, video_id })));
+    if (ultimo.estado !== 'pending') return ultimo;
+  }
+  return ultimo;
+}
+
+/** Reel o story de video en una Página: subir, y confirmar la publicación con el estado del video. */
+async function publicarVideoFb(
+  post: ScheduledPost, platform: string, tool: 'fb_publish_reel' | 'fb_publish_story',
+  args: Record<string, unknown>, etiqueta: string, deadline: number,
+): Promise<Resultado> {
+  const base = { post_id: post.id, platform, brand_id: post.brand_id };
+  const texto = extractMcpText(await mcpCall(tool, { brand_id: post.brand_id, ...args }));
+  console.log(`[${etiqueta}][FACEBOOK] post=${post.id} respuesta_cruda=${String(texto).slice(0, 800)}`);
+  let videoId: string | null = null;
+  let postId: string | null = null;
+  try {
+    const d = JSON.parse(texto ?? '{}');
+    videoId = d.video_id != null ? String(d.video_id) : null;
+    postId = d.post_id != null ? String(d.post_id) : null;
+    if (d.success === false) videoId = null;
+  } catch { /* no JSON */ }
+  if (!videoId) return { ...base, status: 'failed', error: `${etiqueta} upload failed (via ${tool}): ${texto}` };
+
+  const estado = await confirmarVideoFb(post.brand_id, videoId, deadline);
+  if (estado.estado === 'error') {
+    return { ...base, status: 'failed', error: `${etiqueta} rejected by Facebook (video ${videoId}): ${estado.detalle}` };
+  }
+  if (estado.estado === 'pending') {
+    console.warn(`[${etiqueta}][FACEBOOK] post=${post.id} video=${videoId} todavía sin publicar al agotar el plazo `
+      + `(${estado.detalle ?? 'sin detalle'}); Facebook lo publica al terminar de procesarlo. NO se reintenta.`);
+  }
+  return { ...base, status: 'published', platform_post_id: postId ?? videoId };
+}
+
 // ── PUBLISH PER PLATFORM ──────────────────────────────────────────────────────
 
 async function publishPost(post: ScheduledPost, deadline: number): Promise<PublishResult> {
   const platform = post.platform.toUpperCase();
 
   try {
-    const carrusel = carouselUrlsOf(post);
+    const plan = mediaPlanOf(post);
+    if (plan.kind === 'invalid') {
+      return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed', error: plan.error };
+    }
+    const carrusel = plan.kind === 'carousel' ? plan.urls : null;
+
+    // ── REEL ── Instagram y Facebook. TikTok sigue en su propio carril (abajo): ya lee el MP4 de
+    // `media_urls[0]`, la misma posición que usa el reel.
+    if (plan.kind === 'reel' && platform === 'INSTAGRAM') {
+      return publicarContenedorIg(post, platform, {
+        media_type: 'REELS', video_url: plan.videoUrl, caption: post.copy_text, share_to_feed: true,
+        ...(plan.coverUrl ? { cover_url: plan.coverUrl } : {}),
+      }, true, 'Reel', deadline);
+    }
+    if (plan.kind === 'reel' && platform === 'FACEBOOK') {
+      return publicarVideoFb(post, platform, 'fb_publish_reel',
+        { video_url: plan.videoUrl, description: post.copy_text }, 'Reel', deadline);
+    }
+
+    // ── STORY ── Sin texto: ninguna de las dos plataformas acepta pie en una story.
+    if (plan.kind === 'story' && platform === 'INSTAGRAM') {
+      return publicarContenedorIg(post, platform, {
+        media_type: 'STORIES', ...(plan.videoUrl ? { video_url: plan.videoUrl } : { image_url: plan.imageUrl }),
+      }, Boolean(plan.videoUrl), 'Story', deadline);
+    }
+    if (plan.kind === 'story' && platform === 'FACEBOOK') {
+      if (plan.videoUrl) {
+        return publicarVideoFb(post, platform, 'fb_publish_story', { video_url: plan.videoUrl }, 'Story', deadline);
+      }
+      const texto = extractMcpText(await mcpCall('fb_publish_story', { brand_id: post.brand_id, url: plan.imageUrl }));
+      console.log(`[Story][FACEBOOK] post=${post.id} respuesta_cruda=${String(texto).slice(0, 800)}`);
+      let pid: string | null = null;
+      try { const d = JSON.parse(texto ?? '{}'); pid = d.success === false ? null : (d.post_id ?? null); } catch { /* no JSON */ }
+      return { post_id: post.id, platform, brand_id: post.brand_id,
+               status: pid ? 'published' : 'failed', platform_post_id: pid ? String(pid) : undefined,
+               error: pid ? undefined : `Story publish failed (via fb_publish_story): ${texto}` };
+    }
+    if (plan.kind === 'story' || (plan.kind === 'reel' && platform !== 'TIKTOK')) {
+      return { post_id: post.id, platform, brand_id: post.brand_id, status: 'failed',
+               error: `MEDIA_PLAN_PLATFORM_UNSUPPORTED: ${plan.kind} no tiene camino de publicación en ${platform}` };
+    }
 
     if (platform === 'INSTAGRAM' && carrusel) {
       // CARRUSEL (2026-09-29). Un contenedor por lámina (`is_carousel_item`), cada uno ESPERADO hasta
