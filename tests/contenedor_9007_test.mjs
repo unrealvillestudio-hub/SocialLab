@@ -163,8 +163,13 @@ test('el tope de corrida queda por DEBAJO del maxDuration declarado en vercel.js
 });
 
 test('cada post recibe lo que QUEDA del plazo, no el plazo entero', () => {
-  assert.ok(/Math\.min\(\s*Date\.now\(\)\s*\+\s*CONTAINER_TIMEOUT_MS\s*,\s*deadline\s*\)/.test(CODIGO),
+  // 2026-11-19 (reels): el tope por contenedor pasa a ser un parametro —el video espera mas que la
+  // imagen— y su valor por defecto sigue siendo CONTAINER_TIMEOUT_MS. La regla no cambia: el tope
+  // por contenedor nunca pasa del plazo de la corrida.
+  assert.ok(/Math\.min\(\s*Date\.now\(\)\s*\+\s*plazos\.timeoutMs\s*,\s*deadline\s*\)/.test(CODIGO),
     'el tope por contenedor ignora el plazo de la corrida: el ultimo post podria pasarse solo');
+  assert.ok(/plazos[^=]*=\s*\{\s*timeoutMs:\s*CONTAINER_TIMEOUT_MS,\s*firstCheckMs:\s*FIRST_CHECK_MS\s*\}/.test(CODIGO),
+    'el plazo por defecto ya no es el de la imagen');
 });
 
 // ── 5 · Cero marcas ───────────────────────────────────────────────────────────
