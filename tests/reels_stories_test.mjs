@@ -158,7 +158,7 @@ test('un video de Facebook pendiente NO se marca failed (evita el segundo reel)'
 test('story y reel sin camino en otra plataforma fallan; TikTok sigue con su carril', () => {
   assert.ok(/plan\.kind === 'story' \|\| \(plan\.kind === 'reel' && platform !== 'TIKTOK'\)/.test(PUB));
   assert.ok(/MEDIA_PLAN_PLATFORM_UNSUPPORTED/.test(PUB));
-  assert.ok(/return publishTikTokInbox\(post\)/.test(PUB), 'el carril de TikTok desapareció');
+  assert.ok(/return publishTikTok\(post\)/.test(PUB), 'el carril de TikTok desapareció');
 });
 
 test('los plazos del video caben en la corrida', () => {

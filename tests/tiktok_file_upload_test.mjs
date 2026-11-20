@@ -29,6 +29,10 @@ export async function getSocialToken(provider: string, brandId: string) {
   return (globalThis as any).__tokenRow ?? null;
 }
 export async function upsertSocialToken(row: any) { return true; }
+export async function getPublishChannelConfig(brandId: string, providerPlatform: string) {
+  (globalThis as any).__configPedida = { brandId, providerPlatform };
+  return (globalThis as any).__channelConfig ?? null;
+}
 export function isoToMs(iso: string | null): number { return iso ? Date.parse(iso) : 0; }
 export function msToIso(ms: number): string | null { return ms ? new Date(ms).toISOString() : null; }
 `;
@@ -46,10 +50,12 @@ async function cargar(src = API_SRC) {
 }
 
 /** Un escenario: el video del origen, lo que responde TikTok y lo que se registró. */
-function escenario({ size, initSinUploadUrl = false, putFallaEn = null, putFallaCon = 500, saltoDeRelojTrasPut = 0, initError = null } = {}) {
+function escenario({ size, initSinUploadUrl = false, putFallaEn = null, putFallaCon = 500, saltoDeRelojTrasPut = 0, initError = null,
+  config = null, privacidades = ['SELF_ONLY'] } = {}) {
   const video = Buffer.alloc(size);
   for (let i = 0; i < size; i += 4096) video[i] = (i / 4096) % 251;
-  const reg = { inits: [], puts: [], recibido: [], descargas: 0 };
+  const reg = { inits: [], initUrls: [], creatorInfo: 0, puts: [], recibido: [], descargas: 0 };
+  globalThis.__channelConfig = config;
   const relojReal = Date.now;
   let desfase = 0;
   globalThis.__tokenRow = {
@@ -69,7 +75,12 @@ function escenario({ size, initSinUploadUrl = false, putFallaEn = null, putFalla
       return new Response(video.subarray(a, b + 1), { status: 206, headers: {
         'content-range': `bytes ${a}-${b}/${size}`, 'content-type': 'video/mp4' } });
     }
-    if (u.startsWith('https://open.tiktokapis.com/v2/post/publish/inbox/video/init/')) {
+    if (u === 'https://open.tiktokapis.com/v2/post/publish/creator_info/query/') {
+      reg.creatorInfo++;
+      return Response.json({ data: { privacy_level_options: privacidades, comment_disabled: false, duet_disabled: true, stitch_disabled: false }, error: { code: 'ok' } });
+    }
+    if (u === 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/' || u === 'https://open.tiktokapis.com/v2/post/publish/video/init/') {
+      reg.initUrls.push(u);
       reg.inits.push(JSON.parse(init.body));
       if (initError) return Response.json({ error: { code: initError, message: 'x' } }, { status: 403 });
       return Response.json({ data: { publish_id: 'pub_1', ...(initSinUploadUrl ? {} : { upload_url: 'https://up.test/u' }) },
@@ -88,7 +99,7 @@ function escenario({ size, initSinUploadUrl = false, putFallaEn = null, putFalla
   return { video, reg, restaurar: () => { Date.now = relojReal; } };
 }
 
-const POST = { id: 'post-1', brand_id: 'MarcaPrueba', platform: 'tiktok', media_urls: ['https://origen.test/v.mp4'] };
+const POST = { id: 'post-1', brand_id: 'MarcaPrueba', platform: 'tiktok', copy_text: 'Texto de la pieza', media_urls: ['https://origen.test/v.mp4'] };
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
 let passed = 0; const failures = [];
@@ -127,12 +138,12 @@ console.log('\n1 · subida correcta');
 for (const size of [3 * MB, 25 * MB + 123]) {
   await test(`un video de ${size} bytes llega entero, en orden y por partes`, async () => {
     const { video, reg, restaurar } = escenario({ size });
-    try { subidaCorrecta(await api.publishTikTokInbox(POST), video, reg); } finally { restaurar(); }
+    try { subidaCorrecta(await api.publishTikTok(POST), video, reg); } finally { restaurar(); }
   });
 }
 await test('nunca se descarga el video entero de una vez: una descarga por parte', async () => {
   const { reg, restaurar } = escenario({ size: 25 * MB + 123 });
-  try { await api.publishTikTokInbox(POST); assert.equal(reg.descargas, reg.puts.length); assert.ok(reg.puts.length >= 2); }
+  try { await api.publishTikTok(POST); assert.equal(reg.descargas, reg.puts.length); assert.ok(reg.puts.length >= 2); }
   finally { restaurar(); }
 });
 
@@ -140,28 +151,28 @@ console.log('\n2 · fallos dichos');
 await test('sin video: falla sin tocar la red', async () => {
   const { reg, restaurar } = escenario({ size: 10 });
   try {
-    const r = await api.publishTikTokInbox({ ...POST, media_urls: [], image_url: 'https://origen.test/foto.jpg' });
+    const r = await api.publishTikTok({ ...POST, media_urls: [], image_url: 'https://origen.test/foto.jpg' });
     assert.equal(r.status, 'failed'); assert.equal(reg.inits.length, 0);
   } finally { restaurar(); }
 });
 await test('init sin upload_url: falla y no sube nada', async () => {
   const { reg, restaurar } = escenario({ size: 3 * MB, initSinUploadUrl: true });
   try {
-    const r = await api.publishTikTokInbox(POST);
+    const r = await api.publishTikTok(POST);
     assert.equal(r.status, 'failed'); assert.match(r.error, /upload_url/); assert.equal(reg.puts.length, 0);
   } finally { restaurar(); }
 });
 await test('un 400 de una parte: falla diciendo cuál, sin reintentar y sin seguir', async () => {
   const { reg, restaurar } = escenario({ size: 25 * MB + 123, putFallaEn: 1, putFallaCon: 400 });
   try {
-    const r = await api.publishTikTokInbox(POST);
+    const r = await api.publishTikTok(POST);
     assert.equal(r.status, 'failed'); assert.match(r.error, /parte 1\/2.*400/); assert.equal(reg.puts.length, 1);
   } finally { restaurar(); }
 });
 await test('un 5xx de una parte se reintenta UNA vez y la subida sigue', async () => {
   const { video, reg, restaurar } = escenario({ size: 25 * MB + 123, putFallaEn: 1, putFallaCon: 503 });
   try {
-    const r = await api.publishTikTokInbox(POST);
+    const r = await api.publishTikTok(POST);
     assert.equal(r.status, 'published', r.error); assert.equal(reg.puts.length, 3);
     assert.equal(reg.puts[0].headers['Content-Range'], reg.puts[1].headers['Content-Range'], 'el reintento no es la misma parte');
   } finally { restaurar(); }
@@ -169,22 +180,65 @@ await test('un 5xx de una parte se reintenta UNA vez y la subida sigue', async (
 await test('dos 5xx seguidos en la misma parte: falla', async () => {
   const { reg, restaurar } = escenario({ size: 25 * MB + 123, putFallaEn: [1, 2], putFallaCon: 502 });
   try {
-    const r = await api.publishTikTokInbox(POST);
+    const r = await api.publishTikTok(POST);
     assert.equal(r.status, 'failed'); assert.match(r.error, /parte 1\/2.*502/); assert.equal(reg.puts.length, 2);
   } finally { restaurar(); }
 });
 await test('5 borradores pendientes (spam_risk_too_many_pending_share): falla explicando qué hacer', async () => {
   const { reg, restaurar } = escenario({ size: 3 * MB, initError: 'spam_risk_too_many_pending_share' });
   try {
-    const r = await api.publishTikTokInbox(POST);
+    const r = await api.publishTikTok(POST);
     assert.equal(r.status, 'failed'); assert.match(r.error, /5 borradores pendientes/); assert.equal(reg.puts.length, 0);
   } finally { restaurar(); }
 });
 await test('se agota el presupuesto de tiempo: TIKTOK_UPLOAD_TIME_BUDGET antes de la siguiente parte', async () => {
   const { reg, restaurar } = escenario({ size: 25 * MB + 123, saltoDeRelojTrasPut: 241_000 });
   try {
-    const r = await api.publishTikTokInbox(POST);
+    const r = await api.publishTikTok(POST);
     assert.equal(r.status, 'failed'); assert.match(r.error, /TIKTOK_UPLOAD_TIME_BUDGET/); assert.equal(reg.puts.length, 1);
+  } finally { restaurar(); }
+});
+
+console.log('\n2 bis · modo por dato del canal');
+await test('sin post_mode: borrador al inbox, sin creator_info, y se busca el canal por la plataforma del proveedor', async () => {
+  const { video, reg, restaurar } = escenario({ size: 3 * MB });
+  try {
+    subidaCorrecta(await api.publishTikTok(POST), video, reg);
+    assert.equal(reg.initUrls[0], 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
+    assert.equal(reg.creatorInfo, 0); assert.ok(!('post_info' in reg.inits[0]));
+    assert.deepEqual(globalThis.__configPedida, { brandId: 'MarcaPrueba', providerPlatform: 'TIKTOK' });
+  } finally { restaurar(); }
+});
+await test('post_mode=direct: creator_info primero, init de Direct Post con post_info SELF_ONLY y la subida igual', async () => {
+  const { video, reg, restaurar } = escenario({ size: 25 * MB + 123, config: { post_mode: 'direct' } });
+  try {
+    subidaCorrecta(await api.publishTikTok(POST), video, reg);
+    assert.equal(reg.creatorInfo, 1);
+    assert.equal(reg.initUrls[0], 'https://open.tiktokapis.com/v2/post/publish/video/init/');
+    const pi = reg.inits[0].post_info;
+    assert.equal(pi.privacy_level, 'SELF_ONLY'); assert.equal(pi.title, 'Texto de la pieza');
+    assert.equal(pi.disable_duet, true, 'manda lo que la cuenta tiene desactivado'); assert.equal(pi.is_aigc, true);
+  } finally { restaurar(); }
+});
+await test('direct con una privacidad que la cuenta no ofrece: falla dicho, sin init ni subida', async () => {
+  const { reg, restaurar } = escenario({ size: 3 * MB, config: { post_mode: 'direct', privacy_level: 'PUBLIC_TO_EVERYONE' } });
+  try {
+    const r = await api.publishTikTok(POST);
+    assert.equal(r.status, 'failed'); assert.match(r.error, /PUBLIC_TO_EVERYONE/); assert.equal(reg.inits.length, 0); assert.equal(reg.puts.length, 0);
+  } finally { restaurar(); }
+});
+await test('un post_mode desconocido: falla dicho, sin llamar a TikTok', async () => {
+  const { reg, restaurar } = escenario({ size: 3 * MB, config: { post_mode: 'publicar' } });
+  try {
+    const r = await api.publishTikTok(POST);
+    assert.equal(r.status, 'failed'); assert.match(r.error, /post_mode/); assert.equal(reg.inits.length, 0);
+  } finally { restaurar(); }
+});
+await test('app sin auditar con otra privacidad: el 403 de TikTok se explica', async () => {
+  const { restaurar } = escenario({ size: 3 * MB, config: { post_mode: 'direct' }, initError: 'unaudited_client_can_only_post_to_private_accounts' });
+  try {
+    const r = await api.publishTikTok(POST);
+    assert.equal(r.status, 'failed'); assert.match(r.error, /SELF_ONLY/);
   } finally { restaurar(); }
 });
 
@@ -196,8 +250,20 @@ async function sabotaje(nombre, de, a, opciones = {}) {
     const { video, reg, restaurar } = escenario({ size: 25 * MB + 123, ...opciones });
     try {
       let visto = false;
-      try { subidaCorrecta(await roto.publishTikTokInbox(POST), video, reg); } catch { visto = true; }
+      try { subidaCorrecta(await roto.publishTikTok(POST), video, reg); } catch { visto = true; }
       assert.ok(visto, 'el test no detectó el sabotaje');
+    } finally { restaurar(); }
+  });
+}
+async function sabotajeDirecto() {
+  const de = 'if (modo.mode === TIKTOK_POST_MODE.DIRECT) {';
+  assert.ok(API_SRC.includes(de), 'el sabotaje del modo directo ya no aplica');
+  const roto = await cargar(API_SRC.replace(de, 'if (false) {'));
+  await test('sabotaje en rojo — el modo direct del canal se ignora', async () => {
+    const { reg, restaurar } = escenario({ size: 3 * MB, config: { post_mode: 'direct' } });
+    try {
+      await roto.publishTikTok(POST);
+      assert.notEqual(reg.initUrls[0], 'https://open.tiktokapis.com/v2/post/publish/video/init/', 'el test no detectó el sabotaje');
     } finally { restaurar(); }
   });
 }
@@ -205,6 +271,7 @@ await sabotaje('sin Content-Range', "        'Content-Range': contentRangeOf(r, 
 await sabotaje('las partes al revés', 'const r = plan.ranges[i];', 'const r = plan.ranges[plan.ranges.length - 1 - i];');
 await sabotaje('sin reintento ante 5xx', 'intento >= TIKTOK_CHUNK_RETRIES_5XX) break;', 'intento >= 0) break;',
   { putFallaEn: 1, putFallaCon: 503 });
+await sabotajeDirecto();
 await sabotaje('se da por publicado sin subir', 'for (let i = 0; i < plan.ranges.length; i++) {', 'for (let i = 0; i < 0; i++) {');
 
 console.log(`\n${passed} ok, ${failures.length} fallos`);

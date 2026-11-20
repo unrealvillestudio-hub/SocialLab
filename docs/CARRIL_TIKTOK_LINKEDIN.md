@@ -74,6 +74,15 @@ OAuth), `api/_linkedin.ts` (puro + posteo bloqueado), `api/linkedin-oauth.ts` (e
      > (TikTok lo exige igual con `url_ownership_unverified`).»* `PULL_FROM_URL` exige verificar el
      > dominio que aloja el video, y el MP4 vive en un host de almacenamiento que no es nuestro.
 
+   - **Vigente (2026-11-20, decisión de Sam): dos modos por marca, elegidos en el dato del canal**
+     (`intel.brand_publish_channels.config` de la fila con `provider_platform = TIKTOK`):
+     - `post_mode`: `inbox` (borrador, el modo si no se declara) o `direct` (Direct Post, `video.publish`).
+     - `privacy_level`: por defecto `SELF_ONLY`, la única que admite la app mientras no esté auditada.
+     - `is_aigc`: por defecto `true` (el carril produce contenido generado con IA); `false` para desactivarlo.
+     - `disable_comment` / `disable_duet` / `disable_stitch`: opcionales; si la cuenta los tiene desactivados, manda la cuenta.
+     El OAuth pide `user.info.basic`, `video.upload` y `video.publish`. **Una cuenta autorizada antes del
+     2026-11-20 no tiene `video.publish` y hay que reautorizarla** para usar `direct`.
+
 3. **Crea la tabla `social_oauth_tokens`** en Supabase (el worker la lee con el service role). DDL:
 
    ```sql

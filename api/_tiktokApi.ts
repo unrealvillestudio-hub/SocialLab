@@ -9,8 +9,9 @@
  */
 
 import {
-  TIKTOK_TOKEN_URL, TIKTOK_INBOX_INIT_URL,
-  TIKTOK_PROVIDER, TIKTOK_SCOPES_INBOX,
+  TIKTOK_TOKEN_URL, TIKTOK_INBOX_INIT_URL, TIKTOK_DIRECT_INIT_URL, TIKTOK_CREATOR_INFO_URL,
+  TIKTOK_PROVIDER, TIKTOK_SCOPES, TIKTOK_POST_MODE,
+  resolvePostMode, readCreatorInfo, buildDirectPostInfo, buildDirectPostInitBody,
   parseTokenResponse, isAccessTokenExpired,
   buildInboxInitBody, readInboxInitResult,
   tiktokVideoUrlOf, planChunks, contentRangeOf, uploadContentTypeOf, videoSizeFromHeaders,
@@ -18,7 +19,7 @@ import {
   type TikTokTokenRecord,
 } from './_tiktok.js';
 import {
-  getSocialToken, upsertSocialToken, isoToMs, msToIso, SocialStoreError,
+  getSocialToken, upsertSocialToken, getPublishChannelConfig, isoToMs, msToIso, SocialStoreError,
   type SocialTokenRow,
 } from './_socialTokens.js';
 
@@ -28,7 +29,7 @@ const CLIENT_KEY    = () => process.env.TIKTOK_CLIENT_KEY ?? '';
 const CLIENT_SECRET = () => process.env.TIKTOK_CLIENT_SECRET ?? '';
 const REDIRECT_URI  = () => process.env.TIKTOK_REDIRECT_URI ?? '';
 
-export { TIKTOK_SCOPES_INBOX, REDIRECT_URI as tiktokRedirectUri, CLIENT_KEY as tiktokClientKey };
+export { TIKTOK_SCOPES, REDIRECT_URI as tiktokRedirectUri, CLIENT_KEY as tiktokClientKey };
 
 /** El resultado de publicar, en la misma forma que usa `publish.ts`. */
 export interface TikTokPublishResult {
@@ -106,15 +107,24 @@ export async function getValidAccessToken(brandId: string): Promise<{ accessToke
 
 // ── POSTEO: BORRADOR AL INBOX (video.upload) ───────────────────────────────────
 
-/** Llama al init del inbox. Devuelve la respuesta cruda parseada; la lee `readInboxInitResult`. */
-async function callInboxInit(accessToken: string, body: ReturnType<typeof buildInboxInitBody>): Promise<unknown> {
-  const res = await fetch(TIKTOK_INBOX_INIT_URL, {
+/** Llama a un init (borrador o Direct Post). Devuelve la respuesta cruda parseada; la lee `readInboxInitResult`. */
+async function callInit(url: string, accessToken: string, body: unknown): Promise<unknown> {
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json; charset=UTF-8',
     },
     body: JSON.stringify(body),
+  });
+  return res.json().catch(() => ({}));
+}
+
+/** `creator_info/query`: lo que la cuenta permite. Se llama antes de cada Direct Post. */
+async function callCreatorInfo(accessToken: string): Promise<unknown> {
+  const res = await fetch(TIKTOK_CREATOR_INFO_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' },
   });
   return res.json().catch(() => ({}));
 }
@@ -144,8 +154,8 @@ async function sondearOrigen(videoUrl: string): Promise<{ size: number | null; c
  * NO espera a que el borrador llegue al inbox: el procesamiento de TikTok es asíncrono y el desenlace
  * lo cierra la persona en la app, no el carril.
  */
-export async function publishTikTokInbox(post: {
-  id: string; brand_id: string; platform: string;
+export async function publishTikTok(post: {
+  id: string; brand_id: string; platform: string; copy_text?: string | null;
   image_url?: string | null; media_urls?: string[] | null; video_url?: string | null;
 }): Promise<TikTokPublishResult> {
   const base = { post_id: post.id, platform: post.platform.toUpperCase(), brand_id: post.brand_id };
@@ -174,7 +184,28 @@ export async function publishTikTokInbox(post: {
   const plan = planChunks(origen.size);
   if (!plan.ok) return fail(`TikTok: ${plan.error}`);
 
-  const init = readInboxInitResult(await callInboxInit(accessToken, buildInboxInitBody(plan)));
+  // EL MODO ES DATO DEL CANAL DE LA MARCA. Sin canal o sin `post_mode`: borrador, como siempre.
+  let config: Record<string, unknown> | null;
+  try {
+    config = await getPublishChannelConfig(post.brand_id, base.platform);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const modo = resolvePostMode(config);
+  if (!modo.ok) return fail(`TikTok: ${modo.error}`);
+
+  let initUrl = TIKTOK_INBOX_INIT_URL;
+  let initBody: unknown = buildInboxInitBody(plan);
+  if (modo.mode === TIKTOK_POST_MODE.DIRECT) {
+    const creator = readCreatorInfo(await callCreatorInfo(accessToken));
+    if (!creator.ok) return fail(`TikTok creator_info falló (${creator.code})${creator.message ? `: ${creator.message}` : ''}`);
+    const info = buildDirectPostInfo({ config, creator: creator.info, title: post.copy_text ?? '' });
+    if (!info.ok) return fail(`TikTok: ${info.error}`);
+    initUrl = TIKTOK_DIRECT_INIT_URL;
+    initBody = buildDirectPostInitBody(info.postInfo, plan);
+  }
+
+  const init = readInboxInitResult(await callInit(initUrl, accessToken, initBody));
   if (!init.ok) {
     return fail(inboxInitErrorMessage(init.code, init.message));
   }

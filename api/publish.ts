@@ -26,8 +26,8 @@ import {
   CONTAINER_TIMEOUT_MS, FIRST_CHECK_MS, CHECK_EVERY_MS, PUBLISH_DEADLINE_MS,
   CREATE_RETRY_WAITS_MS, dormir, leerEstadoContenedor, esFalloTransitorioDeCreacion, type ContainerStatus,
 } from './_igContainer.js';
-// TikTok (vía EXENTA de auditoría: borrador al inbox por `video.upload`) y LinkedIn (BLOQUEADO).
-import { publishTikTokInbox } from './_tiktokApi.js';
+// TikTok (borrador al inbox o Direct Post, según el dato del canal de la marca) y LinkedIn (BLOQUEADO).
+import { publishTikTok } from './_tiktokApi.js';
 import { publishLinkedInBlocked } from './_linkedin.js';
 import {
   mediaPlanOf, leerEstadoVideoFb, VIDEO_CONTAINER_TIMEOUT_MS, VIDEO_FIRST_CHECK_MS,
@@ -534,12 +534,11 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
     }
 
     if (platform === 'TIKTOK') {
-      // Vía EXENTA de auditoría: `video.upload` crea un borrador en el inbox de la cuenta
-      // (`POST .../inbox/video/init/` con `source=FILE_UPLOAD` y subida por partes; decisión de Sam
-      // del 2026-11-20, antes `PULL_FROM_URL`). El token se resuelve por marca
-      // desde `social_oauth_tokens`, igual que el carril Meta resuelve el suyo por `meta_accounts`.
-      // El posteo público directo (`video.publish`) exige auditoría y NO está aquí a propósito.
-      return publishTikTokInbox(post);
+      // Dos modos, elegidos por DATO en `intel.brand_publish_channels.config.post_mode` de la marca:
+      // `inbox` (`video.upload`, borrador; el modo si no se declara) o `direct` (`video.publish`,
+      // Direct Post, autorizado por Sam el 2026-11-20). En los dos el video se sube por `FILE_UPLOAD`.
+      // El token se resuelve por marca desde `social_oauth_tokens`, igual que Meta por `meta_accounts`.
+      return publishTikTok(post);
     }
 
     if (platform === 'LINKEDIN') {

@@ -14,7 +14,8 @@
 
 import assert from 'node:assert/strict';
 import {
-  TIKTOK_AUTHORIZE_URL, TIKTOK_SCOPES_INBOX,
+  TIKTOK_AUTHORIZE_URL, TIKTOK_SCOPES,
+  resolvePostMode, readCreatorInfo, buildDirectPostInfo, buildDirectPostInitBody, truncateUtf16,
   buildAuthorizeUrl,
   parseTokenResponse, isAccessTokenExpired,
   buildInboxInitBody, readInboxInitResult, readStatusResult,
@@ -37,20 +38,19 @@ const json = (o) => o; // las funciones leen objetos ya parseados
 test('el authorize URL lleva client_key, code, scope CSV, redirect_uri y state', () => {
   const url = buildAuthorizeUrl({
     clientKey: 'ck_test', redirectUri: 'https://x.test/api/tiktok-oauth',
-    scope: TIKTOK_SCOPES_INBOX, state: 's.m',
+    scope: TIKTOK_SCOPES, state: 's.m',
   });
   assert.ok(url.startsWith(TIKTOK_AUTHORIZE_URL), 'base distinta del authorize oficial');
   const u = new URL(url);
   assert.equal(u.searchParams.get('client_key'), 'ck_test');
   assert.equal(u.searchParams.get('response_type'), 'code');
-  assert.equal(u.searchParams.get('scope'), 'user.info.basic,video.upload');
+  assert.equal(u.searchParams.get('scope'), 'user.info.basic,video.upload,video.publish');
   assert.equal(u.searchParams.get('redirect_uri'), 'https://x.test/api/tiktok-oauth');
   assert.equal(u.searchParams.get('state'), 's.m');
 });
 
-test('los scopes son la vía exenta: upload sí, publish NO', () => {
-  assert.deepEqual([...TIKTOK_SCOPES_INBOX], ['user.info.basic', 'video.upload']);
-  assert.ok(!TIKTOK_SCOPES_INBOX.includes('video.publish'), 'video.publish exige auditoría, no va aquí');
+test('el OAuth pide upload y publish: cambiar de modo es cambiar un dato, sin reautorizar', () => {
+  assert.deepEqual([...TIKTOK_SCOPES], ['user.info.basic', 'video.upload', 'video.publish']);
 });
 
 // ── 2 · State firmado (CSRF) ─────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ test('un state manipulado NO verifica', () => {
 test('un token válido se normaliza con épocas en ms', () => {
   const now = 1_000_000;
   const r = parseTokenResponse(json({
-    access_token: 'at', refresh_token: 'rt', open_id: 'oid', scope: 'user.info.basic,video.upload',
+    access_token: 'at', refresh_token: 'rt', open_id: 'oid', scope: 'user.info.basic,video.upload,video.publish',
     expires_in: 86400, refresh_expires_in: 31536000,
   }), now);
   assert.ok(r.ok);
@@ -224,7 +224,54 @@ test('reintento sólo en 5xx; el aviso de borradores pendientes explica qué hac
   for (const c of [500, 502, 503, 599]) assert.equal(chunkStatusRetryable(c), true);
   for (const c of [200, 206, 400, 403, 404, 416]) assert.equal(chunkStatusRetryable(c), false);
   assert.match(inboxInitErrorMessage('spam_risk_too_many_pending_share', ''), /5 borradores pendientes/);
-  assert.equal(inboxInitErrorMessage('access_token_invalid', 'x'), 'TikTok inbox init falló (access_token_invalid): x');
+  assert.equal(inboxInitErrorMessage('access_token_invalid', 'x'), 'TikTok init falló (access_token_invalid): x');
+});
+
+// ── 7 bis · Direct Post ──────────────────────────────────────────────────────────
+
+const CREATOR = { privacyOptions: ['SELF_ONLY', 'PUBLIC_TO_EVERYONE'], commentDisabled: false, duetDisabled: true, stitchDisabled: false, maxVideoPostDurationSec: 600 };
+
+test('el modo sale del dato: sin declarar es inbox; direct e inbox se leen; lo demás se dice', () => {
+  assert.deepEqual(resolvePostMode(null), { ok: true, mode: 'inbox' });
+  assert.deepEqual(resolvePostMode({}), { ok: true, mode: 'inbox' });
+  assert.deepEqual(resolvePostMode({ post_mode: 'DIRECT' }), { ok: true, mode: 'direct' });
+  assert.deepEqual(resolvePostMode({ post_mode: 'inbox' }), { ok: true, mode: 'inbox' });
+  assert.equal(resolvePostMode({ post_mode: 'publicar' }).ok, false);
+});
+
+test('creator_info: opciones de privacidad y desactivados de la cuenta; sin opciones es fallo', () => {
+  const r = readCreatorInfo({ error: { code: 'ok' }, data: { privacy_level_options: ['SELF_ONLY'], duet_disabled: true, max_video_post_duration_sec: 300 } });
+  assert.ok(r.ok); assert.deepEqual(r.info.privacyOptions, ['SELF_ONLY']); assert.equal(r.info.duetDisabled, true); assert.equal(r.info.maxVideoPostDurationSec, 300);
+  assert.equal(readCreatorInfo({ error: { code: 'ok' }, data: {} }).ok, false);
+  assert.equal(readCreatorInfo({ error: { code: 'access_token_invalid' } }).code, 'access_token_invalid');
+});
+
+test('post_info: SELF_ONLY por defecto, manda la cuenta en los desactivados, is_aigc salvo false explícito', () => {
+  const r = buildDirectPostInfo({ config: {}, creator: CREATOR, title: 'Hola' });
+  assert.ok(r.ok);
+  assert.deepEqual(r.postInfo, { title: 'Hola', privacy_level: 'SELF_ONLY', disable_comment: false, disable_duet: true, disable_stitch: false, is_aigc: true });
+  assert.equal(buildDirectPostInfo({ config: { is_aigc: false, disable_comment: true }, creator: CREATOR, title: '' }).postInfo.disable_comment, true);
+  assert.equal(buildDirectPostInfo({ config: { is_aigc: false }, creator: CREATOR, title: '' }).postInfo.is_aigc, false);
+  assert.equal(buildDirectPostInfo({ config: { privacy_level: 'public_to_everyone' }, creator: CREATOR, title: '' }).postInfo.privacy_level, 'PUBLIC_TO_EVERYONE');
+});
+
+test('una privacidad que la cuenta no ofrece se dice; no se cambia por otra', () => {
+  const r = buildDirectPostInfo({ config: { privacy_level: 'FOLLOWER_OF_CREATOR' }, creator: CREATOR, title: '' });
+  assert.equal(r.ok, false); assert.match(r.error, /FOLLOWER_OF_CREATOR/);
+});
+
+test('el título se corta a 2200 unidades UTF-16 sin partir un emoji', () => {
+  assert.equal(truncateUtf16('a'.repeat(2300), 2200).length, 2200);
+  const conEmoji = 'a'.repeat(2199) + '😀';
+  assert.equal(truncateUtf16(conEmoji, 2200), 'a'.repeat(2199));
+  assert.equal(buildDirectPostInfo({ config: {}, creator: CREATOR, title: 'b'.repeat(3000) }).postInfo.title.length, 2200);
+});
+
+test('el init de Direct Post lleva post_info y el mismo source_info FILE_UPLOAD', () => {
+  const b = buildDirectPostInitBody({ title: 't', privacy_level: 'SELF_ONLY', disable_comment: false, disable_duet: false, disable_stitch: false, is_aigc: true },
+    { video_size: 100, chunk_size: 100, total_chunk_count: 1 });
+  assert.equal(b.post_info.privacy_level, 'SELF_ONLY');
+  assert.deepEqual(b.source_info, { source: 'FILE_UPLOAD', video_size: 100, chunk_size: 100, total_chunk_count: 1 });
 });
 
 // ── 8 · Cero marcas en el módulo ─────────────────────────────────────────────────
