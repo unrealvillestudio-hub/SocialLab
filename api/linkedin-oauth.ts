@@ -18,12 +18,12 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { signState, verifyState } from './_oauthState.js';
+import { signState, verifyState, sinCanalHtml } from './_oauthState.js';
 import {
-  LINKEDIN_TOKEN_URL, LINKEDIN_PROVIDER, LINKEDIN_SCOPES_SKELETON,
+  LINKEDIN_TOKEN_URL, LINKEDIN_PROVIDER, LINKEDIN_SCOPES_SKELETON, LINKEDIN_PROVIDER_PLATFORM,
   buildAuthorizeUrl, parseLinkedInTokenResponse,
 } from './_linkedin.js';
-import { upsertSocialToken, msToIso, type SocialTokenRow } from './_socialTokens.js';
+import { upsertSocialToken, getPublishChannelConfig, msToIso, type SocialTokenRow } from './_socialTokens.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -118,6 +118,18 @@ export default async function handler(req: any, res: any) {
   if (!brandId) {
     return res.status(400).send(pageHtml('Falta brand_id',
       '<p>Inicia el flujo con <code>?brand_id=&lt;marca&gt;</code>.</p>'));
+  }
+  // SÓLO UNA MARCA CON CANAL LINKEDIN (2026-11-20), por la misma razón que en TikTok: un `brand_id` mal escrito deja un
+  // token huérfano que el carril nunca lee.
+  let canal: Record<string, unknown> | null;
+  try {
+    canal = await getPublishChannelConfig(brandId, LINKEDIN_PROVIDER_PLATFORM);
+  } catch (err) {
+    return res.status(503).send(pageHtml('No se pudo comprobar la marca', `<p>${err instanceof Error ? err.message : String(err)}</p>`));
+  }
+  if (!canal) {
+    const { titulo, cuerpo } = sinCanalHtml(brandId, 'LinkedIn');
+    return res.status(404).send(pageHtml(titulo, cuerpo));
   }
   const state = signState({ brand_id: brandId, nonce: randomBytes(16).toString('hex') }, CLIENT_SECRET());
   const url = buildAuthorizeUrl({

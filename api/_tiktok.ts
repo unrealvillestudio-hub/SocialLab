@@ -55,6 +55,9 @@ export const TIKTOK_SCOPES = ['user.info.basic', 'video.upload', 'video.publish'
 /** Nombre del proveedor en la tabla de tokens. Es un eje (la superficie), no una marca. */
 export const TIKTOK_PROVIDER = 'tiktok';
 
+/** El identificador del proveedor en `scheduled_posts.platform` y en `config.provider_platform` del canal. Eje, no marca. */
+export const TIKTOK_PROVIDER_PLATFORM = 'TIKTOK';
+
 /**
  * Margen de seguridad para considerar caducado un access token antes de su hora real. El token
  * dura 24 h; refrescar un minuto antes evita que una publicación larga se quede sin token a medias.
