@@ -246,10 +246,12 @@ test('creator_info: opciones de privacidad y desactivados de la cuenta; sin opci
   assert.equal(readCreatorInfo({ error: { code: 'access_token_invalid' } }).code, 'access_token_invalid');
 });
 
-test('post_info: SELF_ONLY por defecto, manda la cuenta en los desactivados, is_aigc salvo false explícito', () => {
+test('post_info: SELF_ONLY por defecto, manda la cuenta en los desactivados, is_aigc sólo con true explícito', () => {
   const r = buildDirectPostInfo({ config: {}, creator: CREATOR, title: 'Hola' });
   assert.ok(r.ok);
-  assert.deepEqual(r.postInfo, { title: 'Hola', privacy_level: 'SELF_ONLY', disable_comment: false, disable_duet: true, disable_stitch: false, is_aigc: true });
+  assert.deepEqual(r.postInfo, { title: 'Hola', privacy_level: 'SELF_ONLY', disable_comment: false, disable_duet: true, disable_stitch: false, is_aigc: false });
+  assert.equal(buildDirectPostInfo({ config: { is_aigc: true }, creator: CREATOR, title: '' }).postInfo.is_aigc, true);
+  assert.equal(buildDirectPostInfo({ config: { is_aigc: 'true' }, creator: CREATOR, title: '' }).postInfo.is_aigc, false);
   assert.equal(buildDirectPostInfo({ config: { is_aigc: false, disable_comment: true }, creator: CREATOR, title: '' }).postInfo.disable_comment, true);
   assert.equal(buildDirectPostInfo({ config: { is_aigc: false }, creator: CREATOR, title: '' }).postInfo.is_aigc, false);
   assert.equal(buildDirectPostInfo({ config: { privacy_level: 'public_to_everyone' }, creator: CREATOR, title: '' }).postInfo.privacy_level, 'PUBLIC_TO_EVERYONE');

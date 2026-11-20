@@ -362,7 +362,8 @@ export interface DirectPostInfo {
  *   · privacy_level: `config.privacy_level` o `SELF_ONLY`; tiene que estar en las opciones de la cuenta, o
  *     se dice (no se cambia por otra).
  *   · disable_*: `true` si la cuenta lo tiene desactivado (manda la cuenta) o si el canal lo pide.
- *   · is_aigc: `true` salvo que el canal declare `false`: el carril produce contenido generado con IA.
+ *   · is_aigc: `false` salvo que el canal declare `true` (Sam, 2026-11-20: «is_aigc no porque no publicas
+ *     autónomamente, pasa por revisión humana»).
  *   · title: el copy de la publicación, cortado a 2200 unidades UTF-16.
  */
 export function buildDirectPostInfo(params: { config: unknown; creator: CreatorInfo; title: string }):
@@ -379,7 +380,7 @@ export function buildDirectPostInfo(params: { config: unknown; creator: CreatorI
     disable_comment: params.creator.commentDisabled || cfg.disable_comment === true,
     disable_duet: params.creator.duetDisabled || cfg.disable_duet === true,
     disable_stitch: params.creator.stitchDisabled || cfg.disable_stitch === true,
-    is_aigc: cfg.is_aigc !== false,
+    is_aigc: cfg.is_aigc === true,
   } };
 }
 

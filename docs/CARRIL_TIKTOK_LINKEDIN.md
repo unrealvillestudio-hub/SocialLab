@@ -78,7 +78,7 @@ OAuth), `api/_linkedin.ts` (puro + posteo bloqueado), `api/linkedin-oauth.ts` (e
      (`intel.brand_publish_channels.config` de la fila con `provider_platform = TIKTOK`):
      - `post_mode`: `inbox` (borrador, el modo si no se declara) o `direct` (Direct Post, `video.publish`).
      - `privacy_level`: por defecto `SELF_ONLY`, la única que admite la app mientras no esté auditada.
-     - `is_aigc`: por defecto `true` (el carril produce contenido generado con IA); `false` para desactivarlo.
+     - `is_aigc`: por defecto `false` (Sam, 2026-11-20: el contenido pasa por revisión humana antes de publicarse); `true` para activarlo en una marca.
      - `disable_comment` / `disable_duet` / `disable_stitch`: opcionales; si la cuenta los tiene desactivados, manda la cuenta.
      El OAuth pide `user.info.basic`, `video.upload` y `video.publish`. **Una cuenta autorizada antes del
      2026-11-20 no tiene `video.publish` y hay que reautorizarla** para usar `direct`.
