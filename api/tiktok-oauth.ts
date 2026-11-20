@@ -21,8 +21,9 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { signState, verifyState } from './_oauthState.js';
-import { buildAuthorizeUrl, TIKTOK_SCOPES } from './_tiktok.js';
+import { signState, verifyState, sinCanalHtml } from './_oauthState.js';
+import { buildAuthorizeUrl, TIKTOK_SCOPES, TIKTOK_PROVIDER_PLATFORM } from './_tiktok.js';
+import { getPublishChannelConfig } from './_socialTokens.js';
 import { exchangeCode, storeToken } from './_tiktokApi.js';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -81,7 +82,7 @@ export default async function handler(req: any, res: any) {
       return res.status(200).send(page('TikTok conectado',
         `<p>La cuenta de TikTok quedó conectada para la marca <code>${payload.brand_id}</code>.</p>`
         + `<p>open_id: <code>${rec.open_id || '—'}</code> · scope: <code>${rec.scope || '—'}</code></p>`
-        + '<p>El carril ya puede enviar borradores al inbox por <code>video.upload</code>. Puedes cerrar esta pestaña.</p>'));
+        + '<p>El carril ya puede publicar en esta cuenta (borrador o publicación directa, según el canal de la marca). Puedes cerrar esta pestaña.</p>'));
     } catch (err) {
       return res.status(502).send(page('Falló el intercambio del code',
         `<p>${err instanceof Error ? err.message : String(err)}</p>`));
@@ -93,6 +94,18 @@ export default async function handler(req: any, res: any) {
   if (!brandId) {
     return res.status(400).send(page('Falta brand_id',
       '<p>Inicia el flujo con <code>?brand_id=&lt;marca&gt;</code>: la cuenta de TikTok se conecta a esa marca.</p>'));
+  }
+  // SÓLO UNA MARCA CON CANAL TIKTOK (2026-11-20). El `brand_id` tiene que coincidir EXACTO con el de su canal en
+  // `intel.brand_publish_channels`; si no, el token quedaría en una fila que el carril nunca lee.
+  let canal: Record<string, unknown> | null;
+  try {
+    canal = await getPublishChannelConfig(brandId, TIKTOK_PROVIDER_PLATFORM);
+  } catch (err) {
+    return res.status(503).send(page('No se pudo comprobar la marca', `<p>${err instanceof Error ? err.message : String(err)}</p>`));
+  }
+  if (!canal) {
+    const { titulo, cuerpo } = sinCanalHtml(brandId, 'TikTok');
+    return res.status(404).send(page(titulo, cuerpo));
   }
   const state = signState({ brand_id: brandId, nonce: randomBytes(16).toString('hex') }, CLIENT_SECRET());
   const url = buildAuthorizeUrl({

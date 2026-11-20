@@ -20,6 +20,9 @@ export const LINKEDIN_TOKEN_URL     = 'https://www.linkedin.com/oauth/v2/accessT
 /** Nombre del proveedor en la tabla de tokens. Eje (superficie), no marca. */
 export const LINKEDIN_PROVIDER = 'linkedin';
 
+/** El identificador del proveedor en `scheduled_posts.platform` y en `config.provider_platform` del canal. Eje, no marca. */
+export const LINKEDIN_PROVIDER_PLATFORM = 'LINKEDIN';
+
 /**
  * Scopes del esqueleto: SÓLO identidad básica (`openid`, `profile`), que NO dependen de la CMA ni de
  * la entidad legal. NO se piden `w_organization_social` ni `r_organization_social` — ésos son el

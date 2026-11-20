@@ -57,3 +57,17 @@ export function verifyState(state: string, secret: string): StatePayload | null 
     return null;
   }
 }
+
+/**
+ * La página que se muestra cuando el `brand_id` del inicio del OAuth no tiene canal de ese proveedor. PURO.
+ * No redirige al proveedor ni guarda nada: una marca escrita con otras mayúsculas dejaba un token
+ * huérfano que el carril nunca lee (medido el 2026-11-20).
+ */
+export function sinCanalHtml(brandId: string, proveedor: string): { titulo: string; cuerpo: string } {
+  const b = String(brandId).replace(/[<>&"']/g, '');
+  return {
+    titulo: 'Marca sin canal',
+    cuerpo: `<p>La marca <code>${b}</code> no tiene un canal de ${proveedor} en el carril. `
+      + 'Revisa el nombre exacto, con sus mayúsculas y minúsculas, tal como está en el carril. No se guardó nada.</p>',
+  };
+}
