@@ -42,6 +42,7 @@ export const TIKTOK_INBOX_INIT_URL = 'https://open.tiktokapis.com/v2/post/publis
 export const TIKTOK_STATUS_URL     = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
 export const TIKTOK_CREATOR_INFO_URL = 'https://open.tiktokapis.com/v2/post/publish/creator_info/query/';
 export const TIKTOK_DIRECT_INIT_URL  = 'https://open.tiktokapis.com/v2/post/publish/video/init/';
+export const TIKTOK_CONTENT_INIT_URL = 'https://open.tiktokapis.com/v2/post/publish/content/init/';
 
 /**
  * Scopes que pide el OAuth. `user.info.basic` identifica a la cuenta en el callback; `video.upload` crea el
@@ -246,6 +247,9 @@ export function inboxInitErrorMessage(code: string, message: string): string {
   if (code === 'unaudited_client_can_only_post_to_private_accounts') {
     return `${base}. La app no está auditada: Direct Post sólo admite privacy_level SELF_ONLY. Revisar config.privacy_level del canal.`;
   }
+  if (code === 'url_ownership_unverified') {
+    return `${base}. El dominio de las imágenes (TIKTOK_MEDIA_BASE_URL) no está verificado en el portal de TikTok para esta app.`;
+  }
   if (code === 'scope_not_authorized') {
     return `${base}. El token de la marca no tiene el permiso que pide este modo (video.publish para direct): hay que reautorizar la cuenta con /api/tiktok-oauth.`;
   }
@@ -387,6 +391,108 @@ export function buildDirectPostInfo(params: { config: unknown; creator: CreatorI
 /** El cuerpo del init de Direct Post: `post_info` más el mismo `source_info` FILE_UPLOAD del inbox. */
 export function buildDirectPostInitBody(postInfo: DirectPostInfo, plan: { video_size: number; chunk_size: number; total_chunk_count: number }) {
   return { post_info: { ...postInfo }, ...buildInboxInitBody(plan) };
+}
+
+// ── FOTOS (media_type PHOTO) ─────────────────────────────────────────────────────────
+//
+// Especificación `reportado`: citada textualmente del portal por la sesión «AAA - UNRLVL-Publisher + LinkedIn +
+// TikTok APP» el 2026-11-20:
+//   · POST /v2/post/publish/content/init/ con media_type "PHOTO" y post_mode "DIRECT_POST" | "MEDIA_UPLOAD"
+//     (MEDIA_UPLOAD = borrador al inbox);
+//   · source_info: source "PULL_FROM_URL" (la ÚNICA para fotos), photo_images (hasta 35 URL), photo_cover_index;
+//   · las URL tienen que ser de un dominio o prefijo VERIFICADO; si no, 403 `url_ownership_unverified`;
+//   · formatos WebP y JPEG (PNG no), hasta 1080p y 20 MB cada una;
+//   · post_info: title ≤ 90 y description ≤ 4000 unidades UTF-16; privacy_level, disable_comment, auto_add_music
+//     sólo en DIRECT_POST, con privacy_level entre las opciones de creator_info.
+// Sam, 2026-11-20: las imágenes se sirven desde un dominio propio verificado (opción «a», `media.unrealvillestudio.com`).
+// El dominio NO va escrito aquí: es `TIKTOK_MEDIA_BASE_URL` en el runtime. El endpoint `api/tiktok-media.ts` lee la
+// imagen del almacenamiento ya convertida a WebP de hasta 1080 px (transformación de Supabase) y la sirve sin redirect.
+
+export const TIKTOK_PHOTO_MAX_IMAGES = 35;
+export const TIKTOK_DESCRIPTION_MAX_UTF16 = 4000;
+/** El ancho máximo con el que se pide la imagen a la transformación del almacenamiento. */
+export const TIKTOK_PHOTO_MAX_WIDTH = 1080;
+
+/** Un objeto público del almacenamiento: bucket y ruta. */
+export interface StorageObjectRef { bucket: string; path: string }
+
+const SEGMENTO = /^[A-Za-z0-9._\-]+$/;
+/** ¿Es una ruta de objeto segura? Segmentos con letras, dígitos, `.`, `_` y `-`; nunca `.` ni `..` solos. */
+function rutaSegura(path: string): boolean {
+  const partes = path.split('/');
+  return partes.length > 0 && partes.every((x) => x.length > 0 && SEGMENTO.test(x) && x !== '.' && x !== '..');
+}
+
+/**
+ * Si `url` es un objeto PÚBLICO del almacenamiento de `supabaseUrl`, su bucket y ruta. Si no (otro host, otra
+ * ruta, caracteres raros), `null`: el endpoint de imágenes nunca sirve algo que no sea nuestro almacenamiento.
+ */
+export function storageObjectOf(url: string, supabaseUrl: string): StorageObjectRef | null {
+  let u: URL, base: URL;
+  try { u = new URL(url); base = new URL(supabaseUrl); } catch { return null; }
+  if (u.protocol !== 'https:' || u.host !== base.host) return null;
+  const m = /^\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/.exec(u.pathname);
+  if (!m) return null;
+  const bucket = decodeURIComponent(m[1]); const path = decodeURIComponent(m[2]);
+  return SEGMENTO.test(bucket) && rutaSegura(path) ? { bucket, path } : null;
+}
+
+/** El parámetro `o` del endpoint de imágenes (`<bucket>/<ruta>`), validado. */
+export function parseMediaParam(o: unknown): StorageObjectRef | null {
+  if (typeof o !== 'string' || !o) return null;
+  const i = o.indexOf('/');
+  if (i <= 0) return null;
+  const bucket = o.slice(0, i); const path = o.slice(i + 1);
+  return SEGMENTO.test(bucket) && rutaSegura(path) ? { bucket, path } : null;
+}
+
+/** La URL pública (en el dominio verificado) con la que TikTok descarga la imagen. */
+export function mediaProxyUrlOf(baseUrl: string, ref: StorageObjectRef): string {
+  return `${baseUrl.replace(/\/+$/, '')}/api/tiktok-media?o=${encodeURIComponent(`${ref.bucket}/${ref.path}`)}`;
+}
+
+/** La URL de la transformación del almacenamiento: WebP (por `Accept`) de hasta 1080 px de ancho, sin recortar. */
+export function storageRenderUrlOf(supabaseUrl: string, ref: StorageObjectRef): string {
+  const path = ref.path.split('/').map(encodeURIComponent).join('/');
+  return `${supabaseUrl.replace(/\/+$/, '')}/storage/v1/render/image/public/${encodeURIComponent(ref.bucket)}/${path}`
+    + `?width=${TIKTOK_PHOTO_MAX_WIDTH}&resize=contain&quality=90`;
+}
+
+/** Las imágenes de la publicación: el carrusel (`media_urls`) si lo hay, si no `image_url`. Sólo https. */
+export function tiktokPhotoUrlsOf(post: { media_type?: string | null; media_urls?: string[] | null; image_url?: string | null }): string[] {
+  const https = (u: unknown): u is string => typeof u === 'string' && /^https:\/\//.test(u);
+  if (String(post.media_type ?? '').toUpperCase() === 'CAROUSEL' && Array.isArray(post.media_urls)) {
+    const urls = post.media_urls.filter(https);
+    if (urls.length) return urls;
+  }
+  return https(post.image_url) ? [post.image_url] : [];
+}
+
+/**
+ * El cuerpo del init de FOTOS. `direct` lleva privacidad y desactivados (del mismo `buildDirectPostInfo` del video);
+ * el borrador (`MEDIA_UPLOAD`) sólo título y descripción. El texto completo va en `description` y el título vacío: el
+ * Orchestrator no los separa (Sam, 2026-11-20).
+ */
+export function buildPhotoInitBody(params: {
+  mode: TikTokPostMode; photoUrls: string[]; description: string; direct?: DirectPostInfo | null; autoAddMusic?: boolean;
+}): Record<string, unknown> {
+  const description = truncateUtf16(String(params.description ?? ''), TIKTOK_DESCRIPTION_MAX_UTF16);
+  const directo = params.mode === TIKTOK_POST_MODE.DIRECT;
+  const post_info: Record<string, unknown> = { title: '', description };
+  if (directo) {
+    if (!params.direct) throw new Error('buildPhotoInitBody: modo direct sin post_info');
+    post_info.privacy_level = params.direct.privacy_level;
+    post_info.disable_comment = params.direct.disable_comment;
+    post_info.auto_add_music = params.autoAddMusic === true;
+  }
+  const body: Record<string, unknown> = {
+    post_info,
+    source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: params.photoUrls.slice(0, TIKTOK_PHOTO_MAX_IMAGES) },
+    post_mode: directo ? 'DIRECT_POST' : 'MEDIA_UPLOAD',
+    media_type: 'PHOTO',
+  };
+  if (directo && params.direct?.is_aigc) body.is_aigc = true;
+  return body;
 }
 
 /** Lo que resulta de leer el init: un `publish_id` o un motivo (con el `error.code` de TikTok). */
