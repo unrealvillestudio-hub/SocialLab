@@ -53,6 +53,8 @@ interface ScheduledPost {
   brand_id: string;
   platform: string;
   copy_text: string;
+  // TÍTULO (2026-11-20) — aparte del cuerpo; NULL = sin título. Lo escribe content-scheduler (scheduled_posts.title).
+  title?: string | null;
   image_url: string | null;
   status: string;
   scheduled_at: string;
