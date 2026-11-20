@@ -217,7 +217,7 @@ await test('post_mode=direct: creator_info primero, init de Direct Post con post
     assert.equal(reg.initUrls[0], 'https://open.tiktokapis.com/v2/post/publish/video/init/');
     const pi = reg.inits[0].post_info;
     assert.equal(pi.privacy_level, 'SELF_ONLY'); assert.equal(pi.title, 'Texto de la pieza');
-    assert.equal(pi.disable_duet, true, 'manda lo que la cuenta tiene desactivado'); assert.equal(pi.is_aigc, true);
+    assert.equal(pi.disable_duet, true, 'manda lo que la cuenta tiene desactivado'); assert.equal(pi.is_aigc, false);
   } finally { restaurar(); }
 });
 await test('direct con una privacidad que la cuenta no ofrece: falla dicho, sin init ni subida', async () => {
