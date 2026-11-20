@@ -413,6 +413,8 @@ export function buildDirectPostInitBody(postInfo: DirectPostInfo, plan: { video_
 
 export const TIKTOK_PHOTO_MAX_IMAGES = 35;
 export const TIKTOK_DESCRIPTION_MAX_UTF16 = 4000;
+/** El largo máximo del título de un post de fotos (unidades UTF-16). Del video no aplica: allí el texto va en `title`. */
+export const TIKTOK_PHOTO_TITLE_MAX_UTF16 = 90;
 /** El ancho máximo con el que se pide la imagen a la transformación del almacenamiento. */
 export const TIKTOK_PHOTO_MAX_WIDTH = 1080;
 
@@ -473,15 +475,21 @@ export function tiktokPhotoUrlsOf(post: { media_type?: string | null; media_urls
 
 /**
  * El cuerpo del init de FOTOS. `direct` lleva privacidad y desactivados (del mismo `buildDirectPostInfo` del video);
- * el borrador (`MEDIA_UPLOAD`) sólo título y descripción. El texto completo va en `description` y el título vacío: el
- * Orchestrator no los separa (Sam, 2026-11-20).
+ * el borrador (`MEDIA_UPLOAD`) sólo título y descripción. El cuerpo va en `description` y el título de la pieza en
+ * `title`, cortado a 90 unidades UTF-16 (Sam, 2026-11-20: «SI al arreglo del title»; la fila lo trae en
+ * `scheduled_posts.title`). Sin título: vacío, como antes.
+ *
+ * ⛔ NO OPERATIVO — redacción anterior: «El texto completo va en `description` y el título vacío: el Orchestrator no
+ * los separa (Sam, 2026-11-20).» La pieza sí guarda el título aparte; lo que faltaba era que viajara en la fila.
  */
 export function buildPhotoInitBody(params: {
-  mode: TikTokPostMode; photoUrls: string[]; description: string; direct?: DirectPostInfo | null; autoAddMusic?: boolean;
+  mode: TikTokPostMode; photoUrls: string[]; description: string; title?: string | null;
+  direct?: DirectPostInfo | null; autoAddMusic?: boolean;
 }): Record<string, unknown> {
   const description = truncateUtf16(String(params.description ?? ''), TIKTOK_DESCRIPTION_MAX_UTF16);
   const directo = params.mode === TIKTOK_POST_MODE.DIRECT;
-  const post_info: Record<string, unknown> = { title: '', description };
+  const title = truncateUtf16(String(params.title ?? '').trim(), TIKTOK_PHOTO_TITLE_MAX_UTF16);
+  const post_info: Record<string, unknown> = { title, description };
   if (directo) {
     if (!params.direct) throw new Error('buildPhotoInitBody: modo direct sin post_info');
     post_info.privacy_level = params.direct.privacy_level;

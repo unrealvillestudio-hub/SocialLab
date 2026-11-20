@@ -311,7 +311,7 @@ test('las fotos de la fila: el carrusel si lo hay; si no, la imagen; sólo https
   assert.deepEqual(tiktokPhotoUrlsOf({ image_url: 'http://a/0.png' }), []);
 });
 
-test('init de fotos: direct con privacidad; borrador sin ella; texto completo en description; título vacío', () => {
+test('init de fotos: direct con privacidad; borrador sin ella; cuerpo en description; sin título, vacío', () => {
   const d = { title: '', privacy_level: 'SELF_ONLY', disable_comment: false, disable_duet: true, disable_stitch: false, is_aigc: false };
   const b = buildPhotoInitBody({ mode: 'direct', photoUrls: ['https://m/1', 'https://m/2'], description: 'Hola', direct: d });
   assert.deepEqual(b, { post_info: { title: '', description: 'Hola', privacy_level: 'SELF_ONLY', disable_comment: false, auto_add_music: false },
@@ -320,6 +320,13 @@ test('init de fotos: direct con privacidad; borrador sin ella; texto completo en
   assert.equal(i.post_mode, 'MEDIA_UPLOAD'); assert.ok(!('privacy_level' in i.post_info)); assert.equal(i.post_info.description.length, 4000);
   assert.equal(buildPhotoInitBody({ mode: 'inbox', photoUrls: Array.from({ length: 40 }, (_, k) => `https://m/${k}`), description: '' }).source_info.photo_images.length, 35);
   assert.throws(() => buildPhotoInitBody({ mode: 'direct', photoUrls: ['https://m/1'], description: '' }));
+});
+
+test('init de fotos: el título de la fila va en title, recortado a 90 UTF-16', () => {
+  const b = buildPhotoInitBody({ mode: 'inbox', photoUrls: ['https://m/1'], description: 'Cuerpo', title: '  Crawlers read HTML.  ' });
+  assert.equal(b.post_info.title, 'Crawlers read HTML.'); assert.equal(b.post_info.description, 'Cuerpo');
+  assert.equal(buildPhotoInitBody({ mode: 'inbox', photoUrls: ['https://m/1'], description: '', title: 'y'.repeat(120) }).post_info.title.length, 90);
+  assert.equal(buildPhotoInitBody({ mode: 'inbox', photoUrls: ['https://m/1'], description: '', title: null }).post_info.title, '');
 });
 
 // ── 8 · Cero marcas en el módulo ─────────────────────────────────────────────────

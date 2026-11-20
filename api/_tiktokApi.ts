@@ -263,7 +263,7 @@ export async function publishTikTok(post: {
  * Toda imagen tiene que ser un objeto público de NUESTRO almacenamiento; si no, falla dicho, sin llamar a TikTok.
  */
 async function publishTikTokPhotos(post: {
-  id: string; brand_id: string; platform: string; copy_text?: string | null; media_type?: string | null;
+  id: string; brand_id: string; platform: string; copy_text?: string | null; title?: string | null; media_type?: string | null;
   image_url?: string | null; media_urls?: string[] | null;
 }): Promise<TikTokPublishResult> {
   const base = { post_id: post.id, platform: post.platform.toUpperCase(), brand_id: post.brand_id };
@@ -303,7 +303,7 @@ async function publishTikTokPhotos(post: {
     if (!info.ok) return fail(`TikTok: ${info.error}`);
     direct = info.postInfo;
   }
-  const body = buildPhotoInitBody({ mode: modo.mode, photoUrls: fotos, description: post.copy_text ?? '', direct,
+  const body = buildPhotoInitBody({ mode: modo.mode, photoUrls: fotos, description: post.copy_text ?? '', title: post.title ?? null, direct,
     autoAddMusic: (config ?? {}).auto_add_music === true });
   const init = readInboxInitResult(await callInit(TIKTOK_CONTENT_INIT_URL, accessToken, body));
   if (!init.ok) return fail(inboxInitErrorMessage(init.code, init.message));

@@ -277,6 +277,15 @@ await test('carrusel en borrador: MEDIA_UPLOAD con todas las imágenes, sin crea
     assert.equal(b.source_info.photo_images.length, 3);
   } finally { restaurar(); }
 });
+await test('el título de la fila llega a TikTok en title; el cuerpo, en description', async () => {
+  const { reg, restaurar } = escenario({ size: 10 });
+  try {
+    const r = await api.publishTikTok({ ...POST_FOTO, title: "Crawlers don't read control files." });
+    assert.equal(r.status, 'published', r.error);
+    assert.equal(reg.inits[0].post_info.title, "Crawlers don't read control files.");
+    assert.equal(reg.inits[0].post_info.description, 'Texto completo de la pieza');
+  } finally { restaurar(); }
+});
 await test('una imagen que no es de nuestro almacenamiento: falla dicho, sin llamar a TikTok', async () => {
   const { reg, restaurar } = escenario({ size: 10, config: { post_mode: 'direct' } });
   try {
@@ -335,6 +344,19 @@ await sabotajeDirecto();
   });
 }
 await sabotaje('se da por publicado sin subir', 'for (let i = 0; i < plan.ranges.length; i++) {', 'for (let i = 0; i < 0; i++) {');
+
+{
+  const de = "title: post.title ?? null, direct,";
+  assert.ok(API_SRC.includes(de), 'el sabotaje del título ya no aplica');
+  const roto = await cargar(API_SRC.replace(de, 'direct,'));
+  await test('sabotaje en rojo — sin pasar el título, TikTok lo recibe vacío', async () => {
+    const { reg, restaurar } = escenario({ size: 10 });
+    try {
+      await roto.publishTikTok({ ...POST_FOTO, title: 'T' });
+      assert.equal(reg.inits[0].post_info.title, '');
+    } finally { restaurar(); }
+  });
+}
 
 console.log(`\n${passed} ok, ${failures.length} fallos`);
 if (failures.length) process.exit(1);
