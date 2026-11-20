@@ -13,7 +13,8 @@ import {
   TIKTOK_PROVIDER, TIKTOK_SCOPES_INBOX,
   parseTokenResponse, isAccessTokenExpired,
   buildInboxInitBody, readInboxInitResult,
-  tiktokVideoUrlOf, videoUrlHostAllowed,
+  tiktokVideoUrlOf, planChunks, contentRangeOf, uploadContentTypeOf, videoSizeFromHeaders,
+  inboxInitErrorMessage, chunkStatusRetryable, TIKTOK_UPLOAD_BUDGET_MS, TIKTOK_CHUNK_RETRIES_5XX,
   type TikTokTokenRecord,
 } from './_tiktok.js';
 import {
@@ -26,9 +27,6 @@ declare const process: { env: Record<string, string | undefined> };
 const CLIENT_KEY    = () => process.env.TIKTOK_CLIENT_KEY ?? '';
 const CLIENT_SECRET = () => process.env.TIKTOK_CLIENT_SECRET ?? '';
 const REDIRECT_URI  = () => process.env.TIKTOK_REDIRECT_URI ?? '';
-/** Hosts verificados para `video_url` (CSV). Vacío → no se comprueba localmente (TikTok lo exige igual). */
-const VERIFIED_HOSTS = (): string[] =>
-  (process.env.TIKTOK_MEDIA_VERIFIED_HOSTS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 export { TIKTOK_SCOPES_INBOX, REDIRECT_URI as tiktokRedirectUri, CLIENT_KEY as tiktokClientKey };
 
@@ -109,27 +107,42 @@ export async function getValidAccessToken(brandId: string): Promise<{ accessToke
 // ── POSTEO: BORRADOR AL INBOX (video.upload) ───────────────────────────────────
 
 /** Llama al init del inbox. Devuelve la respuesta cruda parseada; la lee `readInboxInitResult`. */
-async function callInboxInit(accessToken: string, videoUrl: string): Promise<unknown> {
+async function callInboxInit(accessToken: string, body: ReturnType<typeof buildInboxInitBody>): Promise<unknown> {
   const res = await fetch(TIKTOK_INBOX_INIT_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json; charset=UTF-8',
     },
-    body: JSON.stringify(buildInboxInitBody(videoUrl)),
+    body: JSON.stringify(body),
   });
   return res.json().catch(() => ({}));
 }
 
+/** Tamaño y tipo del video en el origen, con una lectura del primer byte (sin descargar el archivo). */
+async function sondearOrigen(videoUrl: string): Promise<{ size: number | null; contentType: string | null }> {
+  const res = await fetch(videoUrl, { headers: { Range: 'bytes=0-0' } });
+  await res.arrayBuffer().catch(() => undefined);
+  if (!res.ok) throw new Error(`TikTok: el origen del video respondió ${res.status} al leer su tamaño`);
+  const size = res.status === 206
+    ? videoSizeFromHeaders({ contentRange: res.headers.get('content-range') })
+    : videoSizeFromHeaders({ contentLength: res.headers.get('content-length') });
+  return { size, contentType: res.headers.get('content-type') };
+}
+
 /**
  * Publica un post por la vía EXENTA de auditoría: crea un borrador en el inbox de la cuenta por
- * `PULL_FROM_URL`. Éxito = TikTok devolvió `publish_id` (el borrador está en camino al inbox, donde
- * la persona lo termina y publica). El `publish_id` se guarda como `platform_post_id` para poder
- * consultar el estado después. Un fallo se DICE con el `error.code` de TikTok, nunca se da por hecho.
+ * `FILE_UPLOAD`. Pasos: tamaño del video en el origen → plan de partes → init (devuelve `publish_id`
+ * y `upload_url`) → por cada parte, en orden, se descarga ESA parte del origen (`Range`) y se sube con
+ * `PUT` + `Content-Range`. Nunca se tiene el MP4 entero en memoria: como mucho una parte.
  *
- * NO espera a que el borrador llegue al inbox: la descarga de TikTok es asíncrona y para un borrador
- * el desenlace lo cierra la persona, no el carril. El `publish_id` basta para seguirlo
- * (`/status/fetch/`), que es lo que hace `_tiktok.readStatusResult`.
+ * Éxito = todas las partes subidas con 2xx y un `publish_id`, que se guarda como `platform_post_id`
+ * para seguir el estado (`/status/fetch/`). Un fallo se DICE con su motivo, nunca se da por hecho. Si
+ * se agota `TIKTOK_UPLOAD_BUDGET_MS` falla con `TIKTOK_UPLOAD_TIME_BUDGET`: el borrador no se crea
+ * hasta que llega la última parte, así que reintentar no duplica nada.
+ *
+ * NO espera a que el borrador llegue al inbox: el procesamiento de TikTok es asíncrono y el desenlace
+ * lo cierra la persona en la app, no el carril.
  */
 export async function publishTikTokInbox(post: {
   id: string; brand_id: string; platform: string;
@@ -137,14 +150,11 @@ export async function publishTikTokInbox(post: {
 }): Promise<TikTokPublishResult> {
   const base = { post_id: post.id, platform: post.platform.toUpperCase(), brand_id: post.brand_id };
   const fail = (error: string): TikTokPublishResult => ({ ...base, status: 'failed', error });
+  const inicio = Date.now();
 
   const videoUrl = tiktokVideoUrlOf(post);
   if (!videoUrl) {
     return fail('TikTok requiere un video: no hay URL https de video en media_urls (video.upload no acepta imagen)');
-  }
-  if (!videoUrlHostAllowed(videoUrl, VERIFIED_HOSTS())) {
-    return fail(`TikTok: el host de la URL de video no está entre los dominios verificados (${VERIFIED_HOSTS().join(', ')}). `
-      + 'El init devolvería url_ownership_unverified. Verificar el dominio en el portal o corregir la URL.');
   }
 
   let accessToken: string;
@@ -154,9 +164,53 @@ export async function publishTikTokInbox(post: {
     return fail(err instanceof Error ? err.message : String(err));
   }
 
-  const init = readInboxInitResult(await callInboxInit(accessToken, videoUrl));
+  let origen: { size: number | null; contentType: string | null };
+  try {
+    origen = await sondearOrigen(videoUrl);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  if (!origen.size) return fail('TikTok: no se pudo leer el tamaño del video en el origen (sin Content-Range ni Content-Length)');
+  const plan = planChunks(origen.size);
+  if (!plan.ok) return fail(`TikTok: ${plan.error}`);
+
+  const init = readInboxInitResult(await callInboxInit(accessToken, buildInboxInitBody(plan)));
   if (!init.ok) {
-    return fail(`TikTok inbox init falló (${init.code})${init.message ? `: ${init.message}` : ''}`);
+    return fail(inboxInitErrorMessage(init.code, init.message));
+  }
+  if (!init.uploadUrl) return fail('TikTok inbox init sin data.upload_url: no hay dónde subir el video');
+
+  const contentType = uploadContentTypeOf(origen.contentType);
+  for (let i = 0; i < plan.ranges.length; i++) {
+    const r = plan.ranges[i];
+    const parte = `parte ${i + 1}/${plan.total_chunk_count}`;
+    if (Date.now() - inicio > TIKTOK_UPLOAD_BUDGET_MS) {
+      return fail(`TIKTOK_UPLOAD_TIME_BUDGET: se agotaron ${TIKTOK_UPLOAD_BUDGET_MS} ms antes de la ${parte}`);
+    }
+    const largo = r.end - r.start + 1;
+    const bajada = await fetch(videoUrl, { headers: { Range: `bytes=${r.start}-${r.end}` } });
+    const bytes = new Uint8Array(await bajada.arrayBuffer());
+    if (!bajada.ok || bytes.byteLength !== largo) {
+      return fail(`TikTok: el origen devolvió ${bajada.status} y ${bytes.byteLength} de ${largo} bytes en la ${parte}`);
+    }
+    let subida: Response;
+    let texto = '';
+    for (let intento = 0; ; intento++) {
+      subida = await fetch(init.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(largo),
+          'Content-Range': contentRangeOf(r, plan.video_size),
+        },
+        body: bytes,
+      });
+      texto = await subida.text().catch(() => '');
+      if (subida.ok || !chunkStatusRetryable(subida.status) || intento >= TIKTOK_CHUNK_RETRIES_5XX) break;
+    }
+    if (!subida.ok) {
+      return fail(`TikTok: la subida de la ${parte} respondió ${subida.status}${texto ? `: ${texto.slice(0, 200)}` : ''}`);
+    }
   }
   return { ...base, status: 'published', platform_post_id: init.publishId };
 }

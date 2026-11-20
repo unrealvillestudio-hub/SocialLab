@@ -535,7 +535,8 @@ async function publishPost(post: ScheduledPost, deadline: number): Promise<Publi
 
     if (platform === 'TIKTOK') {
       // Vía EXENTA de auditoría: `video.upload` crea un borrador en el inbox de la cuenta
-      // (`POST .../inbox/video/init/` con `source=PULL_FROM_URL`). El token se resuelve por marca
+      // (`POST .../inbox/video/init/` con `source=FILE_UPLOAD` y subida por partes; decisión de Sam
+      // del 2026-11-20, antes `PULL_FROM_URL`). El token se resuelve por marca
       // desde `social_oauth_tokens`, igual que el carril Meta resuelve el suyo por `meta_accounts`.
       // El posteo público directo (`video.publish`) exige auditoría y NO está aquí a propósito.
       return publishTikTokInbox(post);

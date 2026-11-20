@@ -18,7 +18,9 @@ import {
   buildAuthorizeUrl,
   parseTokenResponse, isAccessTokenExpired,
   buildInboxInitBody, readInboxInitResult, readStatusResult,
-  tiktokVideoUrlOf, videoUrlHostAllowed,
+  tiktokVideoUrlOf, planChunks, contentRangeOf, uploadContentTypeOf, videoSizeFromHeaders,
+  TIKTOK_CHUNK_MIN_BYTES, TIKTOK_CHUNK_MAX_BYTES, TIKTOK_FINAL_CHUNK_MAX_BYTES, TIKTOK_MAX_CHUNKS, TIKTOK_MAX_VIDEO_BYTES,
+  inboxInitErrorMessage, chunkStatusRetryable,
 } from '../api/_tiktok.ts';
 import { signState, verifyState } from '../api/_oauthState.ts';
 
@@ -107,11 +109,71 @@ test('caduca con margen: un token que vence dentro del skew ya se considera cadu
   assert.equal(isAccessTokenExpired(0, now), true, 'sin fecha: caduco por prudencia');
 });
 
-// ── 5 · Inbox init (PULL_FROM_URL) ───────────────────────────────────────────────
+// ── 5 · Inbox init (FILE_UPLOAD) ──────────────────────────────────────────────────
 
-test('el cuerpo del init es PULL_FROM_URL con la URL del video', () => {
-  assert.deepEqual(buildInboxInitBody('https://v.test/x.mp4'),
-    { source_info: { source: 'PULL_FROM_URL', video_url: 'https://v.test/x.mp4' } });
+const MB = 1024 * 1024;
+/** Comprueba las reglas de las partes sobre un plan. */
+function cumpleReglas(p) {
+  assert.ok(p.ok, p.error);
+  assert.equal(p.ranges.length, p.total_chunk_count);
+  assert.ok(p.total_chunk_count >= 1 && p.total_chunk_count <= TIKTOK_MAX_CHUNKS);
+  assert.equal(p.ranges[0].start, 0);
+  assert.equal(p.ranges.at(-1).end, p.video_size - 1);
+  for (let i = 1; i < p.ranges.length; i++) assert.equal(p.ranges[i].start, p.ranges[i - 1].end + 1, 'hueco o solape');
+  if (p.total_chunk_count === 1) { assert.equal(p.chunk_size, p.video_size); return; }
+  assert.ok(p.chunk_size >= TIKTOK_CHUNK_MIN_BYTES && p.chunk_size <= TIKTOK_CHUNK_MAX_BYTES);
+  assert.equal(p.total_chunk_count, Math.floor(p.video_size / p.chunk_size));
+  for (const r of p.ranges.slice(0, -1)) assert.equal(r.end - r.start + 1, p.chunk_size);
+  const ultima = p.ranges.at(-1);
+  assert.ok(ultima.end - ultima.start + 1 >= p.chunk_size && ultima.end - ultima.start + 1 <= TIKTOK_FINAL_CHUNK_MAX_BYTES);
+}
+
+test('el cuerpo del init es FILE_UPLOAD con tamaño, parte y número de partes', () => {
+  assert.deepEqual(buildInboxInitBody({ video_size: 30 * MB, chunk_size: 10 * MB, total_chunk_count: 3 }),
+    { source_info: { source: 'FILE_UPLOAD', video_size: 30 * MB, chunk_size: 10 * MB, total_chunk_count: 3 } });
+});
+
+test('menos de 5 MB, o hasta una parte preferida: se sube entero en 1 parte', () => {
+  for (const n of [1, 4 * MB, 5 * MB, 10 * MB]) {
+    const p = planChunks(n); cumpleReglas(p);
+    assert.equal(p.total_chunk_count, 1);
+  }
+});
+
+test('un video grande se parte con las reglas: partes iguales y la última recoge el resto', () => {
+  for (const n of [10 * MB + 1, 25 * MB + 123, 64 * MB, 200 * MB + 7, 1024 * MB]) cumpleReglas(planChunks(n));
+  const p = planChunks(25 * MB + 123);
+  assert.equal(p.total_chunk_count, 2);
+  assert.equal(p.ranges[1].end - p.ranges[1].start + 1, 15 * MB + 123);
+});
+
+test('el tope de TikTok: 4 GB se parte; un byte más se rechaza', () => {
+  const p = planChunks(TIKTOK_MAX_VIDEO_BYTES); cumpleReglas(p);
+  assert.ok(p.total_chunk_count <= TIKTOK_MAX_CHUNKS);
+  assert.equal(planChunks(TIKTOK_MAX_VIDEO_BYTES + 1).ok, false);
+});
+
+test('lo que no cabe o no es un tamaño se dice, no se intenta', () => {
+  assert.equal(planChunks(0).ok, false);
+  assert.equal(planChunks(-5).ok, false);
+  assert.equal(planChunks(1.5).ok, false);
+});
+
+test('Content-Range, tipo de contenido y tamaño del origen', () => {
+  assert.equal(contentRangeOf({ start: 0, end: 9 }, 30), 'bytes 0-9/30');
+  assert.equal(uploadContentTypeOf('video/quicktime'), 'video/quicktime');
+  assert.equal(uploadContentTypeOf('application/octet-stream'), 'video/mp4');
+  assert.equal(uploadContentTypeOf(null), 'video/mp4');
+  assert.equal(videoSizeFromHeaders({ contentRange: 'bytes 0-0/12345' }), 12345);
+  assert.equal(videoSizeFromHeaders({ contentLength: '999' }), 999);
+  assert.equal(videoSizeFromHeaders({ contentRange: 'bytes 0-0/*' }), null);
+  assert.equal(videoSizeFromHeaders({}), null);
+});
+
+test('el init devuelve el upload_url https, o null si no viene', () => {
+  const r = readInboxInitResult(json({ data: { publish_id: 'p1', upload_url: 'https://up.test/u' }, error: { code: 'ok' } }));
+  assert.equal(r.uploadUrl, 'https://up.test/u');
+  assert.equal(readInboxInitResult(json({ data: { publish_id: 'p1' }, error: { code: 'ok' } })).uploadUrl, null);
 });
 
 test('error.code=ok con publish_id es el único éxito', () => {
@@ -121,10 +183,10 @@ test('error.code=ok con publish_id es el único éxito', () => {
 });
 
 test('un error.code distinto de ok es fallo DICHO con su código', () => {
-  const r = readInboxInitResult(json({ error: { code: 'url_ownership_unverified', message: 'verify domain' } }));
+  const r = readInboxInitResult(json({ error: { code: 'access_token_invalid', message: 'token' } }));
   assert.ok(!r.ok);
-  assert.equal(r.code, 'url_ownership_unverified');
-  assert.match(r.message, /verify domain/);
+  assert.equal(r.code, 'access_token_invalid');
+  assert.match(r.message, /token/);
 });
 
 test('error.code=ok SIN publish_id no se da por publicado', () => {
@@ -158,11 +220,11 @@ test('toma la primera URL https de media_urls; nunca cae a image_url', () => {
   assert.equal(tiktokVideoUrlOf({}), null);
 });
 
-test('el host verificado se comprueba; lista vacía no bloquea', () => {
-  assert.equal(videoUrlHostAllowed('https://cdn.unrealvillestudio.com/a.mp4', ['unrealvillestudio.com']), true);
-  assert.equal(videoUrlHostAllowed('https://evil.test/a.mp4', ['unrealvillestudio.com']), false);
-  assert.equal(videoUrlHostAllowed('https://cualquier.host/a.mp4', []), true);
-  assert.equal(videoUrlHostAllowed('no-es-url', ['unrealvillestudio.com']), false);
+test('reintento sólo en 5xx; el aviso de borradores pendientes explica qué hacer', () => {
+  for (const c of [500, 502, 503, 599]) assert.equal(chunkStatusRetryable(c), true);
+  for (const c of [200, 206, 400, 403, 404, 416]) assert.equal(chunkStatusRetryable(c), false);
+  assert.match(inboxInitErrorMessage('spam_risk_too_many_pending_share', ''), /5 borradores pendientes/);
+  assert.equal(inboxInitErrorMessage('access_token_invalid', 'x'), 'TikTok inbox init falló (access_token_invalid): x');
 });
 
 // ── 8 · Cero marcas en el módulo ─────────────────────────────────────────────────
