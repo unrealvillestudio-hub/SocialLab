@@ -62,9 +62,17 @@ OAuth), `api/_linkedin.ts` (puro + posteo bloqueado), `api/linkedin-oauth.ts` (e
    - `TIKTOK_CLIENT_KEY` — el Client Key de la app.
    - `TIKTOK_CLIENT_SECRET` — el Client Secret de la app (está en Credentials de la app).
    - `TIKTOK_REDIRECT_URI` — la URI del punto 1.
-   - `TIKTOK_MEDIA_VERIFIED_HOSTS` *(opcional)* — hosts verificados para `video_url`, separados por
-     coma, p. ej. `unrealvillestudio.com`. Si está vacío, el carril no lo comprueba localmente
-     (TikTok lo exige igual con `url_ownership_unverified`).
+   - **Vigente (2026-11-20, decisión de Sam): TikTok recibe el video por `FILE_UPLOAD`**: el carril
+     descarga el MP4 del almacenamiento por partes y lo sube a TikTok. No hace falta verificar ningún
+     dominio de video, y **`TIKTOK_MEDIA_VERIFIED_HOSTS` ya no se lee**: si está cargada en Vercel, se
+     puede borrar. Las credenciales que se cargan son las del **sandbox** mientras la app no esté
+     auditada (`reportado` por la sesión de la app el 2026-11-20).
+
+     > **⛔ NO OPERATIVO — redacción anterior (vía `PULL_FROM_URL`).** Se conserva por trazabilidad:
+     > *«`TIKTOK_MEDIA_VERIFIED_HOSTS` (opcional) — hosts verificados para `video_url`, separados por
+     > coma, p. ej. `unrealvillestudio.com`. Si está vacío, el carril no lo comprueba localmente
+     > (TikTok lo exige igual con `url_ownership_unverified`).»* `PULL_FROM_URL` exige verificar el
+     > dominio que aloja el video, y el MP4 vive en un host de almacenamiento que no es nuestro.
 
 3. **Crea la tabla `social_oauth_tokens`** en Supabase (el worker la lee con el service role). DDL:
 
