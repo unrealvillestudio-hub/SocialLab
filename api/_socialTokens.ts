@@ -115,3 +115,20 @@ export function isoToMs(iso: string | null): number {
 export function msToIso(ms: number): string | null {
   return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null;
 }
+
+/**
+ * La `config` del canal de publicación de una marca para un proveedor (p. ej. `TIKTOK`), leída de
+ * `intel.brand_publish_channels` por `config->>provider_platform`. Es donde vive el MODO de publicar de
+ * cada marca (dato, no código). `null` si la marca no tiene ese canal. Falla dicho si la base no responde.
+ */
+export async function getPublishChannelConfig(brandId: string, providerPlatform: string): Promise<Record<string, unknown> | null> {
+  requireConfig();
+  const q = `brand_publish_channels?select=config&brand_id=eq.${encodeURIComponent(brandId)}`
+    + `&config->>provider_platform=eq.${encodeURIComponent(providerPlatform)}&limit=1`;
+  const res = await fetch(`${SB_URL()}/rest/v1/${q}`, { headers: headers({ 'Accept-Profile': 'intel' }) });
+  if (!res.ok) {
+    throw new SocialStoreError(`lectura de intel.brand_publish_channels falló: HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 300)}`);
+  }
+  const rows = (await res.json().catch(() => [])) as Array<{ config?: Record<string, unknown> | null }>;
+  return Array.isArray(rows) && rows.length ? (rows[0].config ?? {}) : null;
+}

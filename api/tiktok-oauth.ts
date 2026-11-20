@@ -22,7 +22,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { signState, verifyState } from './_oauthState.js';
-import { buildAuthorizeUrl, TIKTOK_SCOPES_INBOX } from './_tiktok.js';
+import { buildAuthorizeUrl, TIKTOK_SCOPES } from './_tiktok.js';
 import { exchangeCode, storeToken } from './_tiktokApi.js';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -98,7 +98,7 @@ export default async function handler(req: any, res: any) {
   const url = buildAuthorizeUrl({
     clientKey: CLIENT_KEY(),
     redirectUri: REDIRECT_URI(),
-    scope: TIKTOK_SCOPES_INBOX,
+    scope: TIKTOK_SCOPES,
     state,
   });
   res.statusCode = 302;

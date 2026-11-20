@@ -16,9 +16,18 @@
  *   Inbox init  POST https://open.tiktokapis.com/v2/post/publish/inbox/video/init/   (JSON)
  *   Subida      PUT  <upload_url que devuelve el init>, por partes con Content-Range  (FILE_UPLOAD)
  *   Status      POST https://open.tiktokapis.com/v2/post/publish/status/fetch/       (JSON)
+ *   Creator     POST https://open.tiktokapis.com/v2/post/publish/creator_info/query/ (Direct Post, antes de cada post)
+ *   Direct init POST https://open.tiktokapis.com/v2/post/publish/video/init/         (Direct Post, `video.publish`)
  *
- * `video.upload` (borrador al inbox) es la vía EXENTA de auditoría. El posteo público directo
- * (`video.publish`) exige auditoría con video demo y queda fuera de este módulo a propósito.
+ * DOS MODOS, ELEGIDOS POR DATO EN EL CANAL DE CADA MARCA (`intel.brand_publish_channels.config.post_mode`):
+ *   · `inbox`  (`video.upload`)  — borrador al inbox; la persona lo termina en la app. Exento de auditoría.
+ *                                  Es el modo si el canal no declara ninguno: el comportamiento de siempre.
+ *   · `direct` (`video.publish`) — Direct Post: TikTok lo publica. Sam lo autorizó el 2026-11-20. Mientras
+ *                                  la app no esté auditada, TikTok sólo admite `SELF_ONLY` (privado).
+ *
+ * > ⛔ NO OPERATIVO — redacción anterior (hasta 2026-11-20): «`video.upload` (borrador al inbox) es la vía
+ * > EXENTA de auditoría. El posteo público directo (`video.publish`) exige auditoría con video demo y
+ * > queda fuera de este módulo a propósito.»
  */
 
 // El `state` firmado del OAuth es genérico (TikTok y LinkedIn lo comparten) y vive en
@@ -31,13 +40,16 @@ export const TIKTOK_AUTHORIZE_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 export const TIKTOK_TOKEN_URL     = 'https://open.tiktokapis.com/v2/oauth/token/';
 export const TIKTOK_INBOX_INIT_URL = 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/';
 export const TIKTOK_STATUS_URL     = 'https://open.tiktokapis.com/v2/post/publish/status/fetch/';
+export const TIKTOK_CREATOR_INFO_URL = 'https://open.tiktokapis.com/v2/post/publish/creator_info/query/';
+export const TIKTOK_DIRECT_INIT_URL  = 'https://open.tiktokapis.com/v2/post/publish/video/init/';
 
 /**
- * Scopes de la vía exenta de auditoría. `user.info.basic` identifica a la cuenta en el callback;
- * `video.upload` crea el borrador en el inbox. NO se pide `video.publish`: eso es posteo público y
- * exige auditoría (ver cabecera). Es una lista explícita de SUPERFICIES de permiso, no de marcas.
+ * Scopes que pide el OAuth. `user.info.basic` identifica a la cuenta en el callback; `video.upload` crea el
+ * borrador (modo `inbox`); `video.publish` publica directo (modo `direct`, Sam 2026-11-20). Se piden los dos
+ * para que cambiar el modo de una marca sea cambiar un dato, sin volver a autorizar. Una cuenta autorizada
+ * antes del 2026-11-20 no tiene `video.publish`: hay que reautorizarla. Lista de SUPERFICIES, no de marcas.
  */
-export const TIKTOK_SCOPES_INBOX = ['user.info.basic', 'video.upload'] as const;
+export const TIKTOK_SCOPES = ['user.info.basic', 'video.upload', 'video.publish'] as const;
 
 /** Nombre del proveedor en la tabla de tokens. Es un eje (la superficie), no una marca. */
 export const TIKTOK_PROVIDER = 'tiktok';
@@ -222,12 +234,22 @@ export function buildInboxInitBody(plan: { video_size: number; chunk_size: numbe
 }
 
 /** La cabecera `Content-Range` de una parte. */
-/** El mensaje de un init fallido. `spam_risk_too_many_pending_share` se explica: no es un fallo del carril. */
+/**
+ * El mensaje de un init fallido (borrador o Direct Post). Los códigos que tienen una acción conocida se
+ * explican: no son fallos del carril.
+ */
 export function inboxInitErrorMessage(code: string, message: string): string {
-  const base = `TikTok inbox init falló (${code})${message ? `: ${message}` : ''}`;
-  return code === 'spam_risk_too_many_pending_share'
-    ? `${base}. La cuenta ya tiene 5 borradores pendientes en las últimas 24 h: hay que publicarlos o descartarlos en la app de TikTok antes de enviar otro.`
-    : base;
+  const base = `TikTok init falló (${code})${message ? `: ${message}` : ''}`;
+  if (code === 'spam_risk_too_many_pending_share') {
+    return `${base}. La cuenta ya tiene 5 borradores pendientes en las últimas 24 h: hay que publicarlos o descartarlos en la app de TikTok antes de enviar otro.`;
+  }
+  if (code === 'unaudited_client_can_only_post_to_private_accounts') {
+    return `${base}. La app no está auditada: Direct Post sólo admite privacy_level SELF_ONLY. Revisar config.privacy_level del canal.`;
+  }
+  if (code === 'scope_not_authorized') {
+    return `${base}. El token de la marca no tiene el permiso que pide este modo (video.publish para direct): hay que reautorizar la cuenta con /api/tiktok-oauth.`;
+  }
+  return base;
 }
 
 /** ¿Se reintenta la subida de una parte con este código HTTP? Sólo 5xx. */
@@ -254,6 +276,116 @@ export function videoSizeFromHeaders(h: { contentRange?: string | null; contentL
   const m = /\/(\d+)\s*$/.exec(h.contentRange ?? '');
   const n = m ? Number(m[1]) : Number(h.contentLength ?? NaN);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+// ── DIRECT POST (video.publish) ─────────────────────────────────────────────────────
+//
+// Especificación `reportado`: citada textualmente del portal por la sesión «AAA - UNRLVL-Publisher + LinkedIn +
+// TikTok APP» el 2026-11-20 (developers.tiktok.com no resuelve desde el contenedor de CC):
+//   · POST /v2/post/publish/video/init/ con `post_info` y `source_info` (FILE_UPLOAD, idéntico al del inbox);
+//   · `post_info`: privacy_level OBLIGATORIO (PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | FOLLOWER_OF_CREATOR |
+//     SELF_ONLY), title ≤ 2200 unidades UTF-16, disable_comment / disable_duet / disable_stitch,
+//     video_cover_timestamp_ms, brand_content_toggle / brand_organic_toggle, is_aigc;
+//   · ANTES de cada post: POST /v2/post/publish/creator_info/query/, y privacy_level tiene que estar en los
+//     privacy_level_options que devuelve;
+//   · app sin auditar: sólo SELF_ONLY; con otro valor, 403 `unaudited_client_can_only_post_to_private_accounts`.
+
+/** Los modos de publicar en TikTok. Nombran lo que HACE el carril, no una marca. */
+export const TIKTOK_POST_MODE = { INBOX: 'inbox', DIRECT: 'direct' } as const;
+export type TikTokPostMode = typeof TIKTOK_POST_MODE[keyof typeof TIKTOK_POST_MODE];
+
+/** Privacidad por defecto de Direct Post: la única que admite una app sin auditar. */
+export const TIKTOK_DEFAULT_PRIVACY = 'SELF_ONLY';
+export const TIKTOK_TITLE_MAX_UTF16 = 2200;
+
+/**
+ * El modo del canal, leído de su `config`. Sin `post_mode` → `inbox` (como siempre). Un valor que no sea
+ * uno de los dos modos es error DICHO: no se adivina si se quiso publicar o dejar borrador.
+ */
+export function resolvePostMode(config: unknown): { ok: true; mode: TikTokPostMode } | { ok: false; error: string } {
+  const bruto = (config as Record<string, unknown> | null | undefined)?.post_mode;
+  if (bruto === undefined || bruto === null || String(bruto).trim() === '') return { ok: true, mode: TIKTOK_POST_MODE.INBOX };
+  const v = String(bruto).trim().toLowerCase();
+  if (v === TIKTOK_POST_MODE.INBOX || v === TIKTOK_POST_MODE.DIRECT) return { ok: true, mode: v };
+  return { ok: false, error: `config.post_mode=${JSON.stringify(bruto)} no es un modo de TikTok (inbox | direct)` };
+}
+
+/** Lo que importa de `creator_info/query`. */
+export interface CreatorInfo {
+  privacyOptions: string[];
+  commentDisabled: boolean;
+  duetDisabled: boolean;
+  stitchDisabled: boolean;
+  maxVideoPostDurationSec: number | null;
+}
+
+/** Lee la respuesta de `creator_info/query`. Sin `error.code === 'ok'` o sin opciones de privacidad, es fallo. */
+export function readCreatorInfo(json: unknown): { ok: true; info: CreatorInfo } | { ok: false; code: string; message: string } {
+  const j = (json ?? {}) as Record<string, unknown>;
+  const error = (j.error ?? {}) as Record<string, unknown>;
+  const code = typeof error.code === 'string' ? error.code : 'unknown_error';
+  const message = typeof error.message === 'string' ? error.message : '';
+  if (code !== 'ok') return { ok: false, code, message };
+  const d = (j.data ?? {}) as Record<string, unknown>;
+  const opciones = Array.isArray(d.privacy_level_options) ? d.privacy_level_options.filter((x): x is string => typeof x === 'string') : [];
+  if (!opciones.length) return { ok: false, code: 'no_privacy_options', message: 'creator_info sin privacy_level_options' };
+  const max = Number(d.max_video_post_duration_sec);
+  return { ok: true, info: {
+    privacyOptions: opciones,
+    commentDisabled: d.comment_disabled === true,
+    duetDisabled: d.duet_disabled === true,
+    stitchDisabled: d.stitch_disabled === true,
+    maxVideoPostDurationSec: Number.isFinite(max) && max > 0 ? max : null,
+  } };
+}
+
+/** Corta un texto a `max` unidades UTF-16 sin partir un par sustituto (un emoji a medias). */
+export function truncateUtf16(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let corte = max;
+  const c = text.charCodeAt(corte - 1);
+  if (c >= 0xd800 && c <= 0xdbff) corte -= 1;
+  return text.slice(0, corte);
+}
+
+export interface DirectPostInfo {
+  title: string;
+  privacy_level: string;
+  disable_comment: boolean;
+  disable_duet: boolean;
+  disable_stitch: boolean;
+  is_aigc: boolean;
+}
+
+/**
+ * El `post_info` de Direct Post, a partir del dato del canal y de lo que dice la cuenta. PURO.
+ *   · privacy_level: `config.privacy_level` o `SELF_ONLY`; tiene que estar en las opciones de la cuenta, o
+ *     se dice (no se cambia por otra).
+ *   · disable_*: `true` si la cuenta lo tiene desactivado (manda la cuenta) o si el canal lo pide.
+ *   · is_aigc: `true` salvo que el canal declare `false`: el carril produce contenido generado con IA.
+ *   · title: el copy de la publicación, cortado a 2200 unidades UTF-16.
+ */
+export function buildDirectPostInfo(params: { config: unknown; creator: CreatorInfo; title: string }):
+  { ok: true; postInfo: DirectPostInfo } | { ok: false; error: string } {
+  const cfg = (params.config ?? {}) as Record<string, unknown>;
+  const pedida = typeof cfg.privacy_level === 'string' && cfg.privacy_level.trim()
+    ? cfg.privacy_level.trim().toUpperCase() : TIKTOK_DEFAULT_PRIVACY;
+  if (!params.creator.privacyOptions.includes(pedida)) {
+    return { ok: false, error: `privacy_level ${pedida} no está entre las opciones de la cuenta (${params.creator.privacyOptions.join(', ')})` };
+  }
+  return { ok: true, postInfo: {
+    title: truncateUtf16(String(params.title ?? ''), TIKTOK_TITLE_MAX_UTF16),
+    privacy_level: pedida,
+    disable_comment: params.creator.commentDisabled || cfg.disable_comment === true,
+    disable_duet: params.creator.duetDisabled || cfg.disable_duet === true,
+    disable_stitch: params.creator.stitchDisabled || cfg.disable_stitch === true,
+    is_aigc: cfg.is_aigc !== false,
+  } };
+}
+
+/** El cuerpo del init de Direct Post: `post_info` más el mismo `source_info` FILE_UPLOAD del inbox. */
+export function buildDirectPostInitBody(postInfo: DirectPostInfo, plan: { video_size: number; chunk_size: number; total_chunk_count: number }) {
+  return { post_info: { ...postInfo }, ...buildInboxInitBody(plan) };
 }
 
 /** Lo que resulta de leer el init: un `publish_id` o un motivo (con el `error.code` de TikTok). */
