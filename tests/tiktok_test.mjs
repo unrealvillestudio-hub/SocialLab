@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import {
   TIKTOK_AUTHORIZE_URL, TIKTOK_SCOPES,
   resolvePostMode, readCreatorInfo, buildDirectPostInfo, buildDirectPostInitBody, truncateUtf16,
+  storageObjectOf, parseMediaParam, mediaProxyUrlOf, storageRenderUrlOf, tiktokPhotoUrlsOf, buildPhotoInitBody,
   buildAuthorizeUrl,
   parseTokenResponse, isAccessTokenExpired,
   buildInboxInitBody, readInboxInitResult, readStatusResult,
@@ -274,6 +275,51 @@ test('el init de Direct Post lleva post_info y el mismo source_info FILE_UPLOAD'
     { video_size: 100, chunk_size: 100, total_chunk_count: 1 });
   assert.equal(b.post_info.privacy_level, 'SELF_ONLY');
   assert.deepEqual(b.source_info, { source: 'FILE_UPLOAD', video_size: 100, chunk_size: 100, total_chunk_count: 1 });
+});
+
+// ── 7 ter · Fotos ───────────────────────────────────────────────────────────────
+
+const SB = 'https://proyecto.supabase.co';
+test('sólo objetos públicos de NUESTRO almacenamiento; nada de otro host, ruta o caracteres raros', () => {
+  assert.deepEqual(storageObjectOf(`${SB}/storage/v1/object/public/medios/permanent/m/a-b_1.png`, SB), { bucket: 'medios', path: 'permanent/m/a-b_1.png' });
+  assert.equal(storageObjectOf('https://otro.test/storage/v1/object/public/medios/a.png', SB), null);
+  assert.equal(storageObjectOf(`${SB}/storage/v1/object/sign/medios/a.png`, SB), null);
+  assert.equal(storageObjectOf(`http://proyecto.supabase.co/storage/v1/object/public/medios/a.png`, SB), null);
+  // `%2E%2E` lo normaliza el parser de URL dentro de la ruta pública: no escapa del bucket.
+  assert.deepEqual(storageObjectOf(`${SB}/storage/v1/object/public/medios/x/%2E%2E/secreto.png`, SB), { bucket: 'medios', path: 'secreto.png' });
+  assert.equal(storageObjectOf(`${SB}/storage/v1/object/public/medios/a%20b.png`, SB), null, 'espacios fuera');
+  assert.equal(storageObjectOf('no-es-url', SB), null);
+});
+
+test('el parámetro del endpoint se valida igual: bucket/ruta, sin .. ni vacíos', () => {
+  assert.deepEqual(parseMediaParam('medios/a/b.png'), { bucket: 'medios', path: 'a/b.png' });
+  for (const malo of ['', 'medios', '/a.png', 'medios/../x.png', 'medios/a//b.png', 'medios/a b.png', 'medios/a?.png', 42]) {
+    assert.equal(parseMediaParam(malo), null, String(malo));
+  }
+});
+
+test('la URL que descarga TikTok va en el dominio verificado; la del almacenamiento pide WebP hasta 1080 px', () => {
+  const ref = { bucket: 'medios', path: 'p/a.png' };
+  assert.equal(mediaProxyUrlOf('https://media.ejemplo.test/', ref), 'https://media.ejemplo.test/api/tiktok-media?o=medios%2Fp%2Fa.png');
+  assert.equal(parseMediaParam(decodeURIComponent('medios%2Fp%2Fa.png')).path, 'p/a.png', 'ida y vuelta');
+  assert.equal(storageRenderUrlOf(SB, ref), `${SB}/storage/v1/render/image/public/medios/p/a.png?width=1080&resize=contain&quality=90`);
+});
+
+test('las fotos de la fila: el carrusel si lo hay; si no, la imagen; sólo https', () => {
+  assert.deepEqual(tiktokPhotoUrlsOf({ media_type: 'CAROUSEL', media_urls: ['https://a/1.png', 'http://a/2.png', 'https://a/3.png'], image_url: 'https://a/0.png' }), ['https://a/1.png', 'https://a/3.png']);
+  assert.deepEqual(tiktokPhotoUrlsOf({ image_url: 'https://a/0.png' }), ['https://a/0.png']);
+  assert.deepEqual(tiktokPhotoUrlsOf({ image_url: 'http://a/0.png' }), []);
+});
+
+test('init de fotos: direct con privacidad; borrador sin ella; texto completo en description; título vacío', () => {
+  const d = { title: '', privacy_level: 'SELF_ONLY', disable_comment: false, disable_duet: true, disable_stitch: false, is_aigc: false };
+  const b = buildPhotoInitBody({ mode: 'direct', photoUrls: ['https://m/1', 'https://m/2'], description: 'Hola', direct: d });
+  assert.deepEqual(b, { post_info: { title: '', description: 'Hola', privacy_level: 'SELF_ONLY', disable_comment: false, auto_add_music: false },
+    source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: ['https://m/1', 'https://m/2'] }, post_mode: 'DIRECT_POST', media_type: 'PHOTO' });
+  const i = buildPhotoInitBody({ mode: 'inbox', photoUrls: ['https://m/1'], description: 'x'.repeat(5000) });
+  assert.equal(i.post_mode, 'MEDIA_UPLOAD'); assert.ok(!('privacy_level' in i.post_info)); assert.equal(i.post_info.description.length, 4000);
+  assert.equal(buildPhotoInitBody({ mode: 'inbox', photoUrls: Array.from({ length: 40 }, (_, k) => `https://m/${k}`), description: '' }).source_info.photo_images.length, 35);
+  assert.throws(() => buildPhotoInitBody({ mode: 'direct', photoUrls: ['https://m/1'], description: '' }));
 });
 
 // ── 8 · Cero marcas en el módulo ─────────────────────────────────────────────────

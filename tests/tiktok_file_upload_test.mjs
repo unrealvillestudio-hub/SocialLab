@@ -79,7 +79,8 @@ function escenario({ size, initSinUploadUrl = false, putFallaEn = null, putFalla
       reg.creatorInfo++;
       return Response.json({ data: { privacy_level_options: privacidades, comment_disabled: false, duet_disabled: true, stitch_disabled: false }, error: { code: 'ok' } });
     }
-    if (u === 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/' || u === 'https://open.tiktokapis.com/v2/post/publish/video/init/') {
+    if (u === 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/' || u === 'https://open.tiktokapis.com/v2/post/publish/video/init/'
+        || u === 'https://open.tiktokapis.com/v2/post/publish/content/init/') {
       reg.initUrls.push(u);
       reg.inits.push(JSON.parse(init.body));
       if (initError) return Response.json({ error: { code: initError, message: 'x' } }, { status: 403 });
@@ -99,7 +100,10 @@ function escenario({ size, initSinUploadUrl = false, putFallaEn = null, putFalla
   return { video, reg, restaurar: () => { Date.now = relojReal; } };
 }
 
-const POST = { id: 'post-1', brand_id: 'MarcaPrueba', platform: 'tiktok', copy_text: 'Texto de la pieza', media_urls: ['https://origen.test/v.mp4'] };
+const POST = { id: 'post-1', brand_id: 'MarcaPrueba', platform: 'tiktok', copy_text: 'Texto de la pieza', media_type: 'REELS', media_urls: ['https://origen.test/v.mp4'] };
+const SB = 'https://proyecto.supabase.co';
+const FOTO = (n) => `${SB}/storage/v1/object/public/medios/permanent/m/foto-${n}.png`;
+const POST_FOTO = { id: 'post-2', brand_id: 'MarcaPrueba', platform: 'tiktok', copy_text: 'Texto completo de la pieza', image_url: FOTO(0) };
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
 let passed = 0; const failures = [];
@@ -148,12 +152,13 @@ await test('nunca se descarga el video entero de una vez: una descarga por parte
 });
 
 console.log('\n2 · fallos dichos');
-await test('sin video: falla sin tocar la red', async () => {
+await test('fila de imagen sin TIKTOK_MEDIA_BASE_URL: falla dicho, sin tocar TikTok', async () => {
   const { reg, restaurar } = escenario({ size: 10 });
+  const antes = process.env.TIKTOK_MEDIA_BASE_URL; delete process.env.TIKTOK_MEDIA_BASE_URL;
   try {
-    const r = await api.publishTikTok({ ...POST, media_urls: [], image_url: 'https://origen.test/foto.jpg' });
-    assert.equal(r.status, 'failed'); assert.equal(reg.inits.length, 0);
-  } finally { restaurar(); }
+    const r = await api.publishTikTok({ ...POST_FOTO });
+    assert.equal(r.status, 'failed'); assert.match(r.error, /TIKTOK_MEDIA_BASE_URL/); assert.equal(reg.inits.length, 0);
+  } finally { restaurar(); if (antes !== undefined) process.env.TIKTOK_MEDIA_BASE_URL = antes; }
 });
 await test('init sin upload_url: falla y no sube nada', async () => {
   const { reg, restaurar } = escenario({ size: 3 * MB, initSinUploadUrl: true });
@@ -242,6 +247,51 @@ await test('app sin auditar con otra privacidad: el 403 de TikTok se explica', a
   } finally { restaurar(); }
 });
 
+console.log('\n2 ter · fotos (PULL_FROM_URL desde el dominio verificado)');
+process.env.SUPABASE_URL = SB;
+process.env.TIKTOK_MEDIA_BASE_URL = 'https://media.ejemplo.test';
+await test('imagen en direct: creator_info, content/init PHOTO con la URL del dominio verificado y el texto en description', async () => {
+  const { reg, restaurar } = escenario({ size: 10, config: { post_mode: 'direct' } });
+  try {
+    const r = await api.publishTikTok({ ...POST_FOTO });
+    assert.equal(r.status, 'published', r.error); assert.equal(r.platform_post_id, 'pub_1');
+    assert.equal(reg.creatorInfo, 1);
+    assert.equal(reg.initUrls[0], 'https://open.tiktokapis.com/v2/post/publish/content/init/');
+    const b = reg.inits[0];
+    assert.equal(b.media_type, 'PHOTO'); assert.equal(b.post_mode, 'DIRECT_POST');
+    assert.deepEqual(b.source_info, { source: 'PULL_FROM_URL', photo_cover_index: 0,
+      photo_images: ['https://media.ejemplo.test/api/tiktok-media?o=medios%2Fpermanent%2Fm%2Ffoto-0.png'] });
+    assert.equal(b.post_info.description, 'Texto completo de la pieza'); assert.equal(b.post_info.title, '');
+    assert.equal(b.post_info.privacy_level, 'SELF_ONLY');
+    assert.equal(reg.puts.length, 0, 'las fotos no se suben por partes'); assert.equal(reg.descargas, 0);
+  } finally { restaurar(); }
+});
+await test('carrusel en borrador: MEDIA_UPLOAD con todas las imágenes, sin creator_info ni privacidad', async () => {
+  const { reg, restaurar } = escenario({ size: 10 });
+  try {
+    const r = await api.publishTikTok({ ...POST_FOTO, media_type: 'CAROUSEL', media_urls: [FOTO(1), FOTO(2), FOTO(3)] });
+    assert.equal(r.status, 'published', r.error);
+    assert.equal(reg.creatorInfo, 0);
+    const b = reg.inits[0];
+    assert.equal(b.post_mode, 'MEDIA_UPLOAD'); assert.ok(!('privacy_level' in b.post_info));
+    assert.equal(b.source_info.photo_images.length, 3);
+  } finally { restaurar(); }
+});
+await test('una imagen que no es de nuestro almacenamiento: falla dicho, sin llamar a TikTok', async () => {
+  const { reg, restaurar } = escenario({ size: 10, config: { post_mode: 'direct' } });
+  try {
+    const r = await api.publishTikTok({ ...POST_FOTO, image_url: 'https://otro.test/foto.png' });
+    assert.equal(r.status, 'failed'); assert.match(r.error, /almacenamiento/); assert.equal(reg.inits.length, 0); assert.equal(reg.creatorInfo, 0);
+  } finally { restaurar(); }
+});
+await test('dominio sin verificar en TikTok: el 403 url_ownership_unverified se explica', async () => {
+  const { restaurar } = escenario({ size: 10, initError: 'url_ownership_unverified' });
+  try {
+    const r = await api.publishTikTok({ ...POST_FOTO });
+    assert.equal(r.status, 'failed'); assert.match(r.error, /no está verificado/);
+  } finally { restaurar(); }
+});
+
 console.log('\n3 · sabotajes (el test tiene que verlos)');
 async function sabotaje(nombre, de, a, opciones = {}) {
   assert.ok(API_SRC.includes(de), `el sabotaje «${nombre}» ya no aplica: el código cambió`);
@@ -272,6 +322,18 @@ await sabotaje('las partes al revés', 'const r = plan.ranges[i];', 'const r = p
 await sabotaje('sin reintento ante 5xx', 'intento >= TIKTOK_CHUNK_RETRIES_5XX) break;', 'intento >= 0) break;',
   { putFallaEn: 1, putFallaCon: 503 });
 await sabotajeDirecto();
+{
+  const de = '  if (!esVideo) return publishTikTokPhotos(post);';
+  assert.ok(API_SRC.includes(de), 'el sabotaje de fotos ya no aplica');
+  const roto = await cargar(API_SRC.replace(de, ''));
+  await test('sabotaje en rojo — sin la rama de fotos, una imagen no se publica como foto', async () => {
+    const { reg, restaurar } = escenario({ size: 10 });
+    try {
+      await roto.publishTikTok({ ...POST_FOTO });
+      assert.notEqual(reg.initUrls[0], 'https://open.tiktokapis.com/v2/post/publish/content/init/', 'el test no detectó el sabotaje');
+    } finally { restaurar(); }
+  });
+}
 await sabotaje('se da por publicado sin subir', 'for (let i = 0; i < plan.ranges.length; i++) {', 'for (let i = 0; i < 0; i++) {');
 
 console.log(`\n${passed} ok, ${failures.length} fallos`);

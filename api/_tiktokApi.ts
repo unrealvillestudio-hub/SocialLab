@@ -12,6 +12,7 @@ import {
   TIKTOK_TOKEN_URL, TIKTOK_INBOX_INIT_URL, TIKTOK_DIRECT_INIT_URL, TIKTOK_CREATOR_INFO_URL,
   TIKTOK_PROVIDER, TIKTOK_SCOPES, TIKTOK_POST_MODE,
   resolvePostMode, readCreatorInfo, buildDirectPostInfo, buildDirectPostInitBody,
+  TIKTOK_CONTENT_INIT_URL, storageObjectOf, mediaProxyUrlOf, tiktokPhotoUrlsOf, buildPhotoInitBody,
   parseTokenResponse, isAccessTokenExpired,
   buildInboxInitBody, readInboxInitResult,
   tiktokVideoUrlOf, planChunks, contentRangeOf, uploadContentTypeOf, videoSizeFromHeaders,
@@ -28,6 +29,9 @@ declare const process: { env: Record<string, string | undefined> };
 const CLIENT_KEY    = () => process.env.TIKTOK_CLIENT_KEY ?? '';
 const CLIENT_SECRET = () => process.env.TIKTOK_CLIENT_SECRET ?? '';
 const REDIRECT_URI  = () => process.env.TIKTOK_REDIRECT_URI ?? '';
+/** El dominio verificado desde el que TikTok descarga las fotos (Sam 2026-11-20: `media.unrealvillestudio.com`). */
+const MEDIA_BASE_URL = () => process.env.TIKTOK_MEDIA_BASE_URL ?? '';
+const SUPABASE_URL   = () => process.env.SUPABASE_URL ?? '';
 
 export { TIKTOK_SCOPES, REDIRECT_URI as tiktokRedirectUri, CLIENT_KEY as tiktokClientKey };
 
@@ -155,16 +159,20 @@ async function sondearOrigen(videoUrl: string): Promise<{ size: number | null; c
  * lo cierra la persona en la app, no el carril.
  */
 export async function publishTikTok(post: {
-  id: string; brand_id: string; platform: string; copy_text?: string | null;
+  id: string; brand_id: string; platform: string; copy_text?: string | null; media_type?: string | null;
   image_url?: string | null; media_urls?: string[] | null; video_url?: string | null;
 }): Promise<TikTokPublishResult> {
   const base = { post_id: post.id, platform: post.platform.toUpperCase(), brand_id: post.brand_id };
   const fail = (error: string): TikTokPublishResult => ({ ...base, status: 'failed', error });
   const inicio = Date.now();
 
+  // SIN VIDEO, FOTOS (2026-11-20). La fila de imagen o carrusel se publica como post de fotos.
+  const esVideo = ['REELS', 'VIDEO'].includes(String(post.media_type ?? '').toUpperCase()) || !!post.video_url;
+  if (!esVideo) return publishTikTokPhotos(post);
+
   const videoUrl = tiktokVideoUrlOf(post);
   if (!videoUrl) {
-    return fail('TikTok requiere un video: no hay URL https de video en media_urls (video.upload no acepta imagen)');
+    return fail('TikTok: la fila declara video y no hay URL https de video en media_urls');
   }
 
   let accessToken: string;
@@ -243,5 +251,61 @@ export async function publishTikTok(post: {
       return fail(`TikTok: la subida de la ${parte} respondió ${subida.status}${texto ? `: ${texto.slice(0, 200)}` : ''}`);
     }
   }
+  return { ...base, status: 'published', platform_post_id: init.publishId };
+}
+
+// ── FOTOS (media_type PHOTO, PULL_FROM_URL desde el dominio verificado) ────────────────────────
+
+/**
+ * Publica una fila de imagen o carrusel como post de FOTOS. TikTok descarga cada imagen desde el dominio verificado
+ * (`TIKTOK_MEDIA_BASE_URL`), donde `api/tiktok-media` la sirve como WebP de hasta 1080 px. Mismo modo por dato que el
+ * video (`config.post_mode`): `direct` (DIRECT_POST, con creator_info y privacidad validada) o `inbox` (MEDIA_UPLOAD).
+ * Toda imagen tiene que ser un objeto público de NUESTRO almacenamiento; si no, falla dicho, sin llamar a TikTok.
+ */
+async function publishTikTokPhotos(post: {
+  id: string; brand_id: string; platform: string; copy_text?: string | null; media_type?: string | null;
+  image_url?: string | null; media_urls?: string[] | null;
+}): Promise<TikTokPublishResult> {
+  const base = { post_id: post.id, platform: post.platform.toUpperCase(), brand_id: post.brand_id };
+  const fail = (error: string): TikTokPublishResult => ({ ...base, status: 'failed', error });
+
+  if (!MEDIA_BASE_URL()) return fail('TikTok fotos: falta TIKTOK_MEDIA_BASE_URL (el dominio verificado de las imágenes) en el runtime');
+  if (!SUPABASE_URL()) return fail('TikTok fotos: falta SUPABASE_URL en el runtime');
+  const urls = tiktokPhotoUrlsOf(post);
+  if (!urls.length) return fail('TikTok: la fila no trae video ni imágenes https');
+  const fotos: string[] = [];
+  for (const u of urls) {
+    const ref = storageObjectOf(u, SUPABASE_URL());
+    if (!ref) return fail(`TikTok fotos: la imagen no es un objeto público de nuestro almacenamiento: ${u.slice(0, 120)}`);
+    fotos.push(mediaProxyUrlOf(MEDIA_BASE_URL(), ref));
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = (await getValidAccessToken(post.brand_id)).accessToken;
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  let config: Record<string, unknown> | null;
+  try {
+    config = await getPublishChannelConfig(post.brand_id, base.platform);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  const modo = resolvePostMode(config);
+  if (!modo.ok) return fail(`TikTok: ${modo.error}`);
+
+  let direct = null;
+  if (modo.mode === TIKTOK_POST_MODE.DIRECT) {
+    const creator = readCreatorInfo(await callCreatorInfo(accessToken));
+    if (!creator.ok) return fail(`TikTok creator_info falló (${creator.code})${creator.message ? `: ${creator.message}` : ''}`);
+    const info = buildDirectPostInfo({ config, creator: creator.info, title: '' });
+    if (!info.ok) return fail(`TikTok: ${info.error}`);
+    direct = info.postInfo;
+  }
+  const body = buildPhotoInitBody({ mode: modo.mode, photoUrls: fotos, description: post.copy_text ?? '', direct,
+    autoAddMusic: (config ?? {}).auto_add_music === true });
+  const init = readInboxInitResult(await callInit(TIKTOK_CONTENT_INIT_URL, accessToken, body));
+  if (!init.ok) return fail(inboxInitErrorMessage(init.code, init.message));
   return { ...base, status: 'published', platform_post_id: init.publishId };
 }

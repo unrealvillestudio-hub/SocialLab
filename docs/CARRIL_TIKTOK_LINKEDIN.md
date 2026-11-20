@@ -83,6 +83,16 @@ OAuth), `api/_linkedin.ts` (puro + posteo bloqueado), `api/linkedin-oauth.ts` (e
      El OAuth pide `user.info.basic`, `video.upload` y `video.publish`. **Una cuenta autorizada antes del
      2026-11-20 no tiene `video.publish` y hay que reautorizarla** para usar `direct`.
 
+   - **Fotos (2026-11-20, decisión de Sam: opción «a»).** Una fila de imagen o carrusel se publica como post de
+     fotos (`media_type PHOTO`). TikTok sólo acepta fotos por URL de un dominio verificado, en WebP o JPEG de hasta
+     1080p. Por eso:
+     - `TIKTOK_MEDIA_BASE_URL` = `https://media.unrealvillestudio.com` en Vercel (Production);
+     - `media.unrealvillestudio.com` dado de alta como dominio del proyecto `social-lab` (el DNS ya resuelve a
+       Vercel por el comodín `*.unrealvillestudio.com`);
+     - el dominio `unrealvillestudio.com` verificado en el portal de TikTok de la app (sandbox) por DNS (TXT);
+     - `api/tiktok-media` sirve cada imagen del almacenamiento como WebP de hasta 1080 px, sin redirect, y sólo
+       objetos públicos del almacenamiento propio.
+
 3. **Crea la tabla `social_oauth_tokens`** en Supabase (el worker la lee con el service role). DDL:
 
    ```sql
